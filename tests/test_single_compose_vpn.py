@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_single_compose_owns_direct_and_vpn_runtime():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert not (ROOT / "compose.vpn.yaml").exists()
+    assert "  gluetun:" in compose
+    assert 'network_mode: "service:gluetun"' in compose
+    assert "STREMIO_VPN_ENABLED_FILE: /vpn/enabled" in compose
+    assert "FTLCONF_dns_upstreams: \"172.30.0.10#1053\"" in compose
+
+
+def test_shared_configuration_volume_remains_rw_for_webadmin_and_ro_for_server():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "stremio-config:/config:ro" in compose
+    assert "stremio-config:/config" in compose
+    assert "/var/run/docker.sock:/var/run/docker.sock" in compose
+
+
+def test_vpn_activation_does_not_restart_gateway_container():
+    profiles = (ROOT / "webadmin" / "vpn_profiles.py").read_text(encoding="utf-8")
+    vpn_admin = (ROOT / "webadmin" / "vpn_admin.py").read_text(encoding="utf-8")
+    gluetun_admin = (ROOT / "webadmin" / "gluetun_admin.py").read_text(encoding="utf-8")
+
+    assert "_set_vpn_requested(True)" in profiles
+    assert "gluetun.restart(" not in profiles
+    assert "gluetun.restart(" not in vpn_admin
+    assert "container.stop(timeout=15)" not in gluetun_admin
+
+
+def test_server_restart_path_is_still_independent_from_vpn():
+    app = (ROOT / "webadmin" / "app.py").read_text(encoding="utf-8")
+    assert 'client().containers.get(CONTAINER)' in app
+    assert "container.restart(timeout=20)" in app
+    assert '["curl", "-fsS", "http://127.0.0.1:11470/health"]' in app
+    assert '["cat", "/config/admin-settings.json"]' in app
+
+
+def test_shell_entrypoints_parse():
+    for relative in ("start.sh", "start-vpn.sh", "vpn/entrypoint.sh"):
+        result = subprocess.run(
+            ["sh", "-n", str(ROOT / relative)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{relative}: {result.stderr}"
+
+
+def test_base_compose_does_not_require_vaapi_device():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    vaapi = (ROOT / "compose.vaapi.yaml").read_text(encoding="utf-8")
+
+    assert 'devices:' not in compose.split("  stremio-libtorrent-server:", 1)[1].split("  webadmin:", 1)[0]
+    assert "${VAAPI_DEVICE:?VAAPI_DEVICE must point to a detected /dev/dri/renderD* device}" in vaapi
+    assert "${VAAPI_DEVICE:-/dev/dri/renderD128}" not in vaapi
+
+
+
+def test_blank_libva_driver_is_not_seeded_or_reinjected():
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+    vaapi = (ROOT / "compose.vaapi.yaml").read_text(encoding="utf-8")
+
+    assert "\nLIBVA_DRIVER_NAME=\n" not in f"\n{env_example}"
+    assert "# LIBVA_DRIVER_NAME=iHD" in env_example
+    assert "LIBVA_DRIVER_NAME=[[:space:]]*$" in start
+    assert "sed -i" in start
+    assert "unset LIBVA_DRIVER_NAME" in start
+    assert "- LIBVA_DRIVER_NAME" in vaapi
+
+
+def test_vaapi_overlay_reports_detected_device_to_webadmin():
+    vaapi = (ROOT / "compose.vaapi.yaml").read_text(encoding="utf-8")
+    transcoding = (ROOT / "webadmin" / "transcoding_config.py").read_text(encoding="utf-8")
+
+    assert "  webadmin:" in vaapi
+    assert 'VAAPI_DEVICE: "' in vaapi
+    assert 'os.getenv("VAAPI_DEVICE", "")' in transcoding
+    assert '"transcoding_vaapi_device": "/dev/dri/renderD128"' not in transcoding
+
+
+def test_vpn_status_uses_active_profile_provider():
+    vpn_admin = (ROOT / "webadmin" / "vpn_admin.py").read_text(encoding="utf-8")
+
+    assert "def _active_profile_provider()" in vpn_admin
+    assert 'result["provider"] = active_provider' in vpn_admin
+    assert '"provider": _active_profile_provider()' in vpn_admin
+
+
+
+def test_vpn_admin_imports_json_for_profile_provider():
+    vpn_admin = (ROOT / "webadmin" / "vpn_admin.py").read_text(encoding="utf-8")
+
+    assert "import json" in vpn_admin
+    assert "json.loads(" in vpn_admin
+
+def test_start_repairs_stale_gluetun_namespace_after_stack_upgrade():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+
+    assert "_repair_gateway_namespace()" in start
+    assert "stale Gluetun namespace detected" in start
+    assert "--no-deps --force-recreate stremio-libtorrent-server" in start
+    assert "repaired_mode" in start
+    assert 'if [ "$repaired_mode" != "container:$gluetun_id" ]' in start
+
+
+def test_start_does_not_recreate_server_when_gateway_namespace_is_current():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+
+    assert '"container:$gluetun_id")' in start
+    assert 'echo "[start] gateway namespace: current"' in start
+    assert "return 0" in start
+
+
+def test_start_has_single_gpu_detection_implementation():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+
+    assert start.count("definitely-not-a-shell-token") == 0
+    assert start.count("_detect_vaapi_device() {") == 1
+    assert start.count("_detect_vaapi_driver() {") == 1
+    assert start.count("_nvidia_available() {") == 1
+    assert start.count("TRANSCODING_MODE=auto") == 1
+    assert start.count("unset TRANSCODING_VIDEO_CODEC") == 1
+
+
+def test_start_help_is_launcher_native_and_precedes_env_creation():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+
+    help_case = start.index('case "${1-}" in')
+    env_file = start.index('ENV_FILE="$ROOT/.env"')
+    gpu_detection = start.index("_detect_vaapi_device() {")
+    assert help_case < env_file < gpu_detection
+    assert "Usage: sh start.sh [COMMAND] [ARGS...]" in start
+    assert "Stremio remains authoritative for COPY vs TRANSCODE" in start
+
+
+def test_start_canonicalizes_intel_media_driver_case():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+
+    # Linux driver module is iHD_drv_video.so. A legacy/inherited lowercase
+    # LIBVA_DRIVER_NAME=ihd must not make libva look for ihd_drv_video.so.
+    assert 'case "$(printf \'%s\' "$LIBVA_DRIVER_NAME" | tr \'[:upper:]\' \'[:lower:]\')" in' in start
+    assert "LIBVA_DRIVER_NAME=iHD" in start
+    assert 'printf \'%s\\n\' "iHD"' in start
+
+
+def test_stremio_uses_private_pihole_resolver():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    resolver_path = ROOT / "docker" / "stremio-resolv.conf"
+
+    assert resolver_path.is_file()
+    resolver = resolver_path.read_text(encoding="utf-8")
+    assert "nameserver 172.30.0.53" in resolver
+    assert "options ndots:0" in resolver
+
+    server = compose.split(
+        "  stremio-libtorrent-server:", 1
+    )[1].split(
+        "  webadmin:", 1
+    )[0]
+
+    assert "./docker/stremio-resolv.conf:/etc/resolv.conf:ro" in server
+    assert "STREMIOSRV_DNS_SERVER" not in compose
+
+
+def test_dns_topology_keeps_pihole_upstream_on_private_proxy():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert 'STREMIO_PIHOLE_DNS: "${STREMIO_PIHOLE_DNS:-172.30.0.53}"' in compose
+    assert 'STREMIO_DNS_PROXY_PORT: "${STREMIO_DNS_PROXY_PORT:-1053}"' in compose
+    assert 'FTLCONF_dns_upstreams: "172.30.0.10#1053"' in compose
+
+
+def test_deployment_package_includes_private_dns_resolver():
+    builder = (
+        ROOT / "tools" / "release" /
+        "build_deployment_package.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"docker/stremio-resolv.conf"' in builder
