@@ -2,7 +2,7 @@ name: "${COMPOSE_PROJECT_NAME:-stremio-platform}"
 
 services:
   gluetun:
-    image: "${VPN_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-vpn:latest}"
+    image: "${VPN_IMAGE:-ghcr.io/emmanique/stremio-vpn:latest}"
     pull_policy: "${STREMIO_PULL_POLICY:-always}"
     container_name: stremio-gluetun
     hostname: stremio-gluetun
@@ -52,7 +52,7 @@ services:
       start_period: 5s
 
   stremio-libtorrent-server:
-    image: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest}"
+    image: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-server:latest}"
     pull_policy: "${STREMIO_PULL_POLICY:-always}"
     container_name: stremio-libtorrent-server
     # This service shares Gluetun's network namespace. Docker forbids a separate
@@ -106,7 +106,7 @@ services:
       retries: 3
 
   webadmin:
-    image: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest}"
+    image: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-webadmin:latest}"
     pull_policy: "${STREMIO_PULL_POLICY:-always}"
     container_name: stremio-webadmin
     restart: unless-stopped
@@ -115,10 +115,10 @@ services:
       STREMIO_CONFIG_FILE: /config/admin-settings.json
       STREMIO_URL: http://gluetun:11470
       STREMIO_CONTAINER: stremio-libtorrent-server
-      STREMIO_IMAGE: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest}"
-      STREMIO_PACKAGE_REPO: "${STREMIO_PACKAGE_REPO:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin}"
-      WEBADMIN_IMAGE: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest}"
-      STREMIO_SOURCE_REPO: "${STREMIO_SOURCE_REPO:-https://github.com/emmanique/stremio-libtorrent-server-webadmin}"
+      STREMIO_IMAGE: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-server:latest}"
+      STREMIO_PACKAGE_REPO: "${STREMIO_PACKAGE_REPO:-ghcr.io/emmanique/stremio-server}"
+      WEBADMIN_IMAGE: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-webadmin:latest}"
+      STREMIO_SOURCE_REPO: "${STREMIO_SOURCE_REPO:-https://github.com/emmanique/stremio-webadmin}"
       STREMIO_SOURCE_BRANCH: "${STREMIO_SOURCE_BRANCH:-main}"
       STREMIO_UPDATE_HEALTH_TIMEOUT: "${STREMIO_UPDATE_HEALTH_TIMEOUT:-180}"
       VPN_CONFIG_DIR: /vpn

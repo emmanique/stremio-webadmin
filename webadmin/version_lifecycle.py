@@ -235,7 +235,7 @@ def component_versions():
             updateCommand=WEBADMIN_UPDATE_COMMAND,
             packageImage=os.getenv(
                 "WEBADMIN_IMAGE",
-                "ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest",
+                "ghcr.io/emmanique/stremio-webadmin:latest",
             ),
             selfUpdate=False,
         ),

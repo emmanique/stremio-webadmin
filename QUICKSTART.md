@@ -4,13 +4,12 @@ This fork runs four coordinated services from one Docker Compose topology:
 
 - `gluetun` — persistent network gateway; DIRECT when VPN is disabled and VPN gateway when enabled;
 
-- `stremio-libtorrent-server` — published Stremio streaming runtime from GHCR by default, mirrored to Docker Hub;
-- `webadmin` — published administration UI from GHCR by default, mirrored to Docker Hub, on port `8090`;
+- `stremio-libtorrent-server` — published Stremio streaming runtime from GHCR;
+- `webadmin` — published administration UI from GHCR on port `8090`;
 - `pihole` — Pi-hole image, with its web UI on port `8053` by default.
 
 The default deployment is **package-only**. `compose.yaml` does not build the application from local source. It pulls the published Server and WebAdmin images plus Pi-hole.
 
-GHCR remains the default registry used by the project. The same validated Server, WebAdmin and VPN images are also mirrored to Docker Hub under `edmanique/stremio-libtorrent-server-webadmin`, so Docker Hub can be used as an alternative registry without rebuilding the application.
 
 The current server release is tracked by `SERVER_VERSION` / `FORK_VERSION`, WebAdmin by `webadmin/WEBADMIN_VERSION`, and the core package version by `pyproject.toml`.
 
@@ -18,9 +17,9 @@ Current platform release:
 
 ```text
 Upstream Core   1.6.22
-Fork/Platform   3.0.5
-WebAdmin        3.0.5
-VPN Gateway     3.0.5
+Fork/Platform   3.0.6
+WebAdmin        3.0.6
+VPN Gateway     3.0.6
 ```
 
 ## 1. Obtain the deployment files
@@ -34,13 +33,14 @@ cd /opt/stremio-webadmin
 cp .env.example .env
 ```
 
-For source development only, clone the repository and use `development`:
+For installation from source, clone the public stable repository:
 
 ```bash
-git clone https://github.com/emmanique/stremio-libtorrent-server-webadmin.git
-cd stremio-libtorrent-server-webadmin
-git checkout development
+git clone https://github.com/emmanique/stremio-webadmin.git
+cd stremio-webadmin
 ```
+
+The public repository contains validated stable source only. Development branches and internal CI are maintained separately in the private development repository.
 
 The application itself is **not built from the deployment package**. Compose pulls the published Server, WebAdmin and VPN images from the selected registry.
 
@@ -51,54 +51,19 @@ The application itself is **not built from the deployment package**. Compose pul
 The default images are:
 
 ```text
-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest
-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest
-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-vpn:latest
+ghcr.io/emmanique/stremio-server:latest
+ghcr.io/emmanique/stremio-webadmin:latest
+ghcr.io/emmanique/stremio-vpn:latest
 pihole/pihole:latest
 ```
 
 You can pin the coordinated release in `.env`:
 
 ```env
-STREMIO_IMAGE=ghcr.io/emmanique/stremio-libtorrent-server-webadmin:3.0.5
-WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:3.0.5
-VPN_IMAGE=ghcr.io/emmanique/stremio-libtorrent-server-webadmin-vpn:3.0.5
+STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.6
+WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.6
+VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.6
 ```
-
-### Docker Hub — alternative mirror
-
-The same validated artifacts are mirrored to Docker Hub using tags in a single repository:
-
-```text
-edmanique/stremio-libtorrent-server-webadmin:latest
-edmanique/stremio-libtorrent-server-webadmin:3.0.5
-
-edmanique/stremio-libtorrent-server-webadmin:webadmin-latest
-edmanique/stremio-libtorrent-server-webadmin:webadmin-3.0.5
-
-edmanique/stremio-libtorrent-server-webadmin:vpn-latest
-edmanique/stremio-libtorrent-server-webadmin:vpn-3.0.5
-```
-
-To use Docker Hub instead of GHCR, set the image overrides in `.env`:
-
-```env
-STREMIO_IMAGE=edmanique/stremio-libtorrent-server-webadmin:3.0.5
-WEBADMIN_IMAGE=edmanique/stremio-libtorrent-server-webadmin:webadmin-3.0.5
-VPN_IMAGE=edmanique/stremio-libtorrent-server-webadmin:vpn-3.0.5
-```
-
-Or follow the moving aliases:
-
-```env
-STREMIO_IMAGE=edmanique/stremio-libtorrent-server-webadmin:latest
-WEBADMIN_IMAGE=edmanique/stremio-libtorrent-server-webadmin:webadmin-latest
-VPN_IMAGE=edmanique/stremio-libtorrent-server-webadmin:vpn-latest
-```
-
-For reproducible deployments, prefer the versioned tags. GHCR and Docker Hub contain the same validated release artifacts; they are not independently rebuilt.
-
-Do not store passwords, API tokens, private keys or certificates in the versioned `.env`.
 
 ## 3. Host IP detection
 

@@ -31,7 +31,7 @@ CONFIG = Path(os.getenv("STREMIO_CONFIG_FILE", "/config/admin-settings.json"))
 STREMIO_URL = os.getenv("STREMIO_URL", "http://stremio-libtorrent-server:11470").rstrip("/")
 CONTAINER = os.getenv("STREMIO_CONTAINER", "stremio-libtorrent-server")
 SOURCE_REPO = os.getenv(
-    "STREMIO_SOURCE_REPO", "https://github.com/emmanique/stremio-libtorrent-server-webadmin"
+    "STREMIO_SOURCE_REPO", "https://github.com/emmanique/stremio-webadmin"
 )
 SOURCE_ARCHIVE = SOURCE_REPO.rstrip("/") + "/archive/refs/heads/main.tar.gz"
 IMAGE = os.getenv("STREMIO_IMAGE", "stremio-libtorrent-server-webadmin:local")

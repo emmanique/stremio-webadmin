@@ -23,8 +23,8 @@ grep -q 'FTLCONF_dns_upstreams: "172.30.0.10#1053"' compose.yaml
 grep -q 'HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE' compose.yaml
 grep -q 'stremio-config:/config:ro' compose.yaml
 grep -q 'vpn-data:/vpn' compose.yaml
-grep -q 'ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest' compose.yaml
-grep -q 'ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest' compose.yaml
+grep -q 'ghcr.io/emmanique/stremio-server:latest' compose.yaml
+grep -q 'ghcr.io/emmanique/stremio-webadmin:latest' compose.yaml
 grep -q 'STREMIO_PACKAGE_REPO' compose.yaml
 if grep -Eq '^[[:space:]]+build:' compose.yaml; then
   echo "Default compose.yaml must consume published images." >&2

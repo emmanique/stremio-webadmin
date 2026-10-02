@@ -20,7 +20,7 @@ SOURCE_REPO = source.SOURCE_REPO
 SOURCE_BRANCH = source.SOURCE_BRANCH
 PACKAGE_REPO = os.getenv(
     "STREMIO_PACKAGE_REPO",
-    "ghcr.io/emmanique/stremio-libtorrent-server-webadmin",
+    "ghcr.io/emmanique/stremio-server",
 ).rstrip(":/")
 
 fork_status = source.fork_status

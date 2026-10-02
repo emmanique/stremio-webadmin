@@ -1,7 +1,5 @@
-# Stremio Server WebAdmin 3.0.5
+# Stremio Server WebAdmin 3.0.6
 
-[![Fast CI](https://github.com/emmanique/stremio-libtorrent-server-webadmin/actions/workflows/ci-fast.yml/badge.svg?branch=main)](https://github.com/emmanique/stremio-libtorrent-server-webadmin/actions/workflows/ci-fast.yml)
-[![Full regression](https://github.com/emmanique/stremio-libtorrent-server-webadmin/actions/workflows/regression.yml/badge.svg?branch=main)](https://github.com/emmanique/stremio-libtorrent-server-webadmin/actions/workflows/regression.yml)
 
 Self-hosted Stremio streaming platform with Stremio/libtorrent server, WebAdmin, Pi-hole, optional Gluetun/OpenVPN routing and hardware transcoding support.
 
@@ -9,10 +7,22 @@ Current versions:
 
 | Component | Version |
 | --- | --- |
-| Fork / Platform | 3.0.5 |
-| WebAdmin | 3.0.5 |
-| VPN Gateway image | `3.0.5` coordinated release tag |
+| Fork / Platform | 3.0.6 |
+| WebAdmin | 3.0.6 |
+| VPN Gateway image | `3.0.6` coordinated release tag |
 | Upstream Server/Core | 1.6.22 |
+
+## 3.0.6 — Public distribution architecture
+
+Version 3.0.6 introduces the separated private-development and public-distribution release model.
+
+Official stable container images:
+
+- `ghcr.io/emmanique/stremio-server:3.0.6`
+- `ghcr.io/emmanique/stremio-webadmin:3.0.6`
+- `ghcr.io/emmanique/stremio-vpn:3.0.6`
+
+The Stremio Server/Core remains at version 1.6.22.
 
 ## 3.0.5 — Upstream 1.6.22 integration and proxy hardening
 
@@ -236,7 +246,7 @@ INSTALL_DIR=/opt/stremio-webadmin
 sudo mkdir -p "$INSTALL_DIR"
 curl -fL \
   -o "/tmp/stremio-webadmin-${VERSION}-deployment.tar.gz" \
-  "https://github.com/emmanique/stremio-libtorrent-server-webadmin/releases/download/v${VERSION}/stremio-webadmin-${VERSION}-deployment.tar.gz"
+  "https://github.com/emmanique/stremio-webadmin/releases/download/v${VERSION}/stremio-webadmin-${VERSION}-deployment.tar.gz"
 
 sudo tar -xzf "/tmp/stremio-webadmin-${VERSION}-deployment.tar.gz" \
   -C "$INSTALL_DIR" --strip-components=1
