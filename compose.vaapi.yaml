@@ -1,0 +1,9 @@
+# VAAPI-only overlay. Pass only the render node required for hardware
+# transcoding. This is LXC-safe and avoids invalid /dev/dri/card* entries
+# exposed by some unprivileged Proxmox containers.
+#
+#   docker compose -f compose.yaml -f compose.vaapi.yaml up -d
+services:
+  stremio-libtorrent-server:
+    devices:
+      - "${VAAPI_DEVICE:-/dev/dri/renderD128}:${VAAPI_DEVICE:-/dev/dri/renderD128}"
