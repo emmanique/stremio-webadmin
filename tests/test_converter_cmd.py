@@ -136,7 +136,7 @@ def test_bitmap_subtitles_are_not_mapped_into_hls_audio_renditions():
     assert "0:3?" not in cmd
 
 
-def test_single_track_path_keeps_existing_fmp4_layout():
+def test_single_track_path_keeps_fmp4_layout():
     decision = {
         "video": {"action": "copy"},
         "audio": {"action": "copy"},
@@ -148,6 +148,9 @@ def test_single_track_path_keeps_existing_fmp4_layout():
     cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
     assert "-var_stream_map" not in cmd
     assert "fmp4" in cmd
+    assert "mpegts" not in cmd
+    assert "init.mp4" in cmd
+    assert "/tmp/j/seg%d.m4s" in cmd
     assert "/tmp/j/index.m3u8" in cmd
 
 
@@ -355,3 +358,70 @@ def test_encode_only_vaapi_preserves_direct_h264(monkeypatch):
     i = cmd.index("-c:v")
     assert cmd[i + 1] == "copy"
     assert "-hwaccel" not in cmd
+
+
+def test_single_track_hls_does_not_delegate_master_to_ffmpeg():
+    """Single-track master is application-owned; FFmpeg writes index/fMP4 only."""
+    decision = {
+        "video": {"action": "copy"},
+        "audio": {"action": "copy"},
+        "_streams": [
+            {"track": "video", "index": 0, "codec": "h264"},
+            {"track": "audio", "index": 1, "codec": "aac", "lang": "eng"},
+        ],
+    }
+
+    cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
+
+    assert "-master_pl_name" not in cmd
+    assert "-var_stream_map" not in cmd
+    assert "fmp4" in cmd
+    assert "mpegts" not in cmd
+    assert "/tmp/j/index.m3u8" in cmd
+    assert "/tmp/j/seg%d.m4s" in cmd
+    assert "init.mp4" in cmd
+
+
+def test_multitrack_hls_still_delegates_master_to_ffmpeg():
+    """Multi-track master remains FFmpeg-owned because it uses var_stream_map."""
+    decision = {
+        "video": {"action": "copy"},
+        "audio": {"action": "copy"},
+        "_streams": [
+            {"track": "video", "index": 0, "codec": "h264"},
+            {"track": "audio", "index": 1, "codec": "aac", "lang": "eng"},
+            {"track": "audio", "index": 2, "codec": "aac", "lang": "por"},
+        ],
+    }
+
+    cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
+
+    assert "-var_stream_map" in cmd
+    assert "-master_pl_name" in cmd
+    assert cmd[cmd.index("-master_pl_name") + 1] == "master.m3u8"
+
+
+def test_single_track_master_contains_real_newlines(tmp_path):
+    """Single-track HLS master must be a real multiline M3U8 playlist."""
+    from stremiosrv.transcode.converter import _write_single_track_master
+
+    master = _write_single_track_master(tmp_path)
+
+    raw = master.read_bytes()
+    text = raw.decode("utf-8")
+
+    assert b"\\n" not in raw
+
+    assert text == (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:7\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=8000000\n"
+        "index.m3u8\n"
+    )
+
+    assert text.splitlines() == [
+        "#EXTM3U",
+        "#EXT-X-VERSION:7",
+        "#EXT-X-STREAM-INF:BANDWIDTH=8000000",
+        "index.m3u8",
+    ]

@@ -753,7 +753,8 @@ def test_dashboard_prefers_registry_activity_for_direct_streams():
     assert "sourceLatest.set(key,p)" in dashboard
     assert "classifyPlayback(state.streams,transcoding,state.playback)" in dashboard
     assert "registryAvailable=!!(playback&&Array.isArray(playback.active))" in dashboard
-    assert "if(registryAvailable){activity.forEach" in dashboard
+    assert "if(registryAvailable){let correlated=0;activity.forEach" in dashboard
+    assert "if(correlated)return" in dashboard
 
 
 def test_dashboard_correlates_hls_registry_job_to_transcoding_session():
@@ -762,3 +763,147 @@ def test_dashboard_correlates_hls_registry_job_to_transcoding_session():
     assert "p.kind==='hls'" in dashboard
     assert "p.workloadId||p.jobId" in dashboard
     assert "sessions.find(x=>x.jobId===workload)" in dashboard
+
+
+def _run_classify_playback_js(streams, transcoding, playback):
+    """Execute the dashboard's real classifyPlayback() function with Node."""
+    import json
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+
+    dashboard = Path("webadmin/static/index.html").read_text(encoding="utf-8")
+
+    match = re.search(
+        r"function classifyPlayback\(streams,transcoding,playback\)\{.*?\}"
+        r"(?=\s*function streamHTML)",
+        dashboard,
+        flags=re.S,
+    )
+    assert match, "classifyPlayback() not found in dashboard"
+
+    function_src = match.group(0)
+
+    harness = f"""
+{function_src}
+
+const streams = {json.dumps(streams)};
+const transcoding = {json.dumps(transcoding)};
+const playback = {json.dumps(playback)};
+
+classifyPlayback(streams, transcoding, playback);
+console.log(JSON.stringify(streams));
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_playback_empty_registry_falls_back_to_active_stream():
+    streams = [{
+        "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "active": True,
+    }]
+
+    result = _run_classify_playback_js(
+        streams,
+        {"active": {"sessions": []}},
+        {"active": []},
+    )
+
+    assert result[0]["playbackActive"] is True
+    assert result[0]["playbackCount"] == 1
+    assert result[0]["playbackMode"] == "direct"
+    assert result[0]["playbackModes"] == ["direct"]
+
+
+def test_playback_correlated_registry_remains_authoritative():
+    streams = [
+        {
+            "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "active": True,
+        },
+        {
+            "infoHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "active": True,
+        },
+    ]
+
+    result = _run_classify_playback_js(
+        streams,
+        {"active": {"sessions": []}},
+        {
+            "active": [{
+                "kind": "source",
+                "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "fileIdx": 0,
+                "client": "web",
+                "userAgent": "test",
+                "lastActivity": 2,
+                "startedAt": 1,
+            }]
+        },
+    )
+
+    assert result[0]["playbackActive"] is True
+    assert result[0]["playbackMode"] == "direct"
+    assert result[0]["playbackCount"] == 1
+
+    # Registry correlated successfully, so the second merely-active
+    # stream must not be promoted by the fallback.
+    assert result[1]["playbackActive"] is False
+    assert result[1]["playbackCount"] == 0
+
+
+def test_playback_multiple_active_streams_do_not_inherit_one_ffmpeg_mode():
+    streams = [
+        {
+            "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "active": True,
+        },
+        {
+            "infoHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "active": True,
+        },
+    ]
+
+    transcoding = {
+        "active": {
+            "sessions": [{
+                "jobId": "job-1",
+                "sourceInfoHash": None,
+                "targetVideo": "h264",
+                "targetAudio": "aac",
+            }]
+        }
+    }
+
+    result = _run_classify_playback_js(
+        streams,
+        transcoding,
+        {"active": []},
+    )
+
+    assert result[0]["playbackActive"] is True
+    assert result[1]["playbackActive"] is True
+
+    assert result[0]["playbackMode"] == "direct"
+    assert result[1]["playbackMode"] == "direct"
+
+    assert result[0]["playbackModes"] == ["direct"]
+    assert result[1]["playbackModes"] == ["direct"]

@@ -251,6 +251,28 @@ def test_subtitle_media_playlist_points_to_global_track_vtt():
     assert "#EXT-X-ENDLIST" in out
 
 
+def test_subtitle_media_playlist_preserves_guessed_file_index():
+    """stremio-core uses /<infohash>/-1 when fileIdx is implicit.
+
+    HLS subtitle discovery must preserve that public URL contract instead
+    of rejecting the mediaURL before playback can resolve GuessFileIdx.
+    """
+    from stremiosrv.api.hls import _subtitle_media_playlist
+
+    info_hash = "d" * 40
+    media = f"https://host/{info_hash}/-1?"
+
+    out = _subtitle_media_playlist(media, 2, 90.0)
+
+    assert out.startswith("#EXTM3U")
+    assert out.count("#EXTINF:") == 3
+    assert f"/{info_hash}/-1/subtitles.vtt?" in out
+    assert "track=2" in out
+    assert "start=0.000" in out
+    assert "start=60.000" in out
+    assert "#EXT-X-ENDLIST" in out
+
+
 def test_subtitle_media_playlist_rejects_non_server_media_url():
     import pytest
     from fastapi import HTTPException

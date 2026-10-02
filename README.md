@@ -1,4 +1,4 @@
-# Stremio Server WebAdmin 3.0.6
+# Stremio Server WebAdmin 3.0.7
 
 
 Self-hosted Stremio streaming platform with Stremio/libtorrent server, WebAdmin, Pi-hole, optional Gluetun/OpenVPN routing and hardware transcoding support.
@@ -7,10 +7,22 @@ Current versions:
 
 | Component | Version |
 | --- | --- |
-| Fork / Platform | 3.0.6 |
-| WebAdmin | 3.0.6 |
+| Fork / Platform | 3.0.7 |
+| WebAdmin | 3.0.7 |
 | VPN Gateway image | `3.0.6` coordinated release tag |
 | Upstream Server/Core | 1.6.22 |
+
+## 3.0.7 — Web Player playback corrections
+
+Version 3.0.7 is a corrective release for browser playback while retaining
+Server/Core 1.6.22 and the distribution architecture introduced in 3.0.6.
+
+The release provides a deterministic single-track HLS master while preserving
+the fMP4 media path, supports Stremio's implicit `fileIdx=-1` throughout the
+HLS/WebVTT subtitle path, and corrects WebAdmin playback classification when
+the playback registry contains no correlated entry.
+
+The VPN Gateway is unchanged from 3.0.6.
 
 ## 3.0.6 — Public distribution architecture
 

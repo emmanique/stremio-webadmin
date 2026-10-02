@@ -65,8 +65,14 @@ def decode_subtitle(raw: bytes) -> str:
             return str(best)
     return raw.decode("windows-1251", errors="replace")  # Cyrillic-biased last resort
 
-# Stremio passes videoUrl as our own stream URL: .../<40-hex-infohash>/<fileIdx>[?...]
-_STREAM_RE = re.compile(r"/([0-9a-fA-F]{40})/(\d+)")
+# Stremio passes videoUrl as our own stream URL:
+# .../<40-hex-infohash>/<fileIdx>[?...]
+#
+# fileIdx may be -1. stremio-core uses that value to mean "choose the
+# playable file for me"; playback.serve() resolves it through GuessFileIdx.
+# Keep that signed index intact here so HLS/subtitle routes preserve the
+# same public stream-URL contract.
+_STREAM_RE = re.compile(r"/([0-9a-fA-F]{40})/(-?\d+)(?:[/?#]|$)")
 
 
 def parse_stream_url(url: str) -> tuple[str, int] | None:
@@ -375,6 +381,32 @@ def _webvtt_window_stream(proc: subprocess.Popen, start: float | None, duration:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+
+
+@router.get("/{info_hash}/-1/subtitles.vtt")
+def subtitles_vtt_guessed(
+    info_hash: str,
+    mediaURL: str,
+    request: Request,
+    track: int = 0,
+    start: float | None = None,
+    duration: float | None = None,
+) -> StreamingResponse:
+    """Serve WebVTT when stremio-core uses -1 for an implicit file index.
+
+    Keep the public -1 contract intact. resolve_media_input(), used by
+    subtitles_vtt(), resolves the mediaURL through the same GuessFileIdx
+    semantics as normal playback.
+    """
+    return subtitles_vtt(
+        info_hash=info_hash,
+        idx=-1,
+        mediaURL=mediaURL,
+        request=request,
+        track=track,
+        start=start,
+        duration=duration,
+    )
 
 
 @router.get("/{info_hash}/{idx:int}/subtitles.vtt")

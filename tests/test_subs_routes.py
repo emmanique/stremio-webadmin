@@ -8,8 +8,22 @@ from stremiosrv.app import create_app
 
 
 def test_parse_stream_url():
-    assert parse_stream_url("https://h:12470/" + "a" * 40 + "/6?") == ("a" * 40, 6)
+    info_hash = "a" * 40
+
+    assert parse_stream_url(
+        f"https://h:12470/{info_hash}/6?"
+    ) == (info_hash, 6)
+
+    # stremio-core uses -1 when no explicit fileIdx was supplied.
+    # Preserve it; playback resolves -1 through GuessFileIdx.
+    assert parse_stream_url(
+        f"https://h:12470/{info_hash}/-1?"
+    ) == (info_hash, -1)
+
     assert parse_stream_url("/tmp/movie.mkv") is None
+    assert parse_stream_url(f"https://h/{info_hash}/abc") is None
+    assert parse_stream_url(f"https://h/{info_hash}/--1") is None
+    assert parse_stream_url(f"https://h/{info_hash}/1.5") is None
 
 
 def test_opensub_hash_null_for_unresolvable_url():
@@ -526,3 +540,83 @@ def test_non_windowed_webvtt_is_not_timestamp_mapped():
 
     payload = b"WEBVTT\n\n00:00:02.000 --> 00:00:04.000\ntext\n"
     assert subs_api._add_webvtt_timestamp_map(payload, None) == payload
+
+
+def test_subtitles_vtt_minus_one_route_delegates_to_webvtt_handler(monkeypatch):
+    """The literal -1 route must reach the existing WebVTT handler."""
+
+    from stremiosrv.api import subs as subs_api
+
+    captured = {}
+
+    def fake_subtitles_vtt(
+        info_hash,
+        idx,
+        mediaURL,
+        request,
+        track=0,
+        start=None,
+        duration=None,
+    ):
+        captured.update(
+            {
+                "info_hash": info_hash,
+                "idx": idx,
+                "mediaURL": mediaURL,
+                "track": track,
+                "start": start,
+                "duration": duration,
+            }
+        )
+        return subs_api.Response(
+            content="WEBVTT\n\n",
+            media_type="text/vtt",
+        )
+
+    monkeypatch.setattr(subs_api, "subtitles_vtt", fake_subtitles_vtt)
+
+    info_hash = "e" * 40
+    media_url = f"https://host/{info_hash}/-1?"
+
+    client = TestClient(create_app())
+    response = client.get(
+        f"/{info_hash}/-1/subtitles.vtt",
+        params={
+            "mediaURL": media_url,
+            "track": 2,
+            "start": 30.0,
+            "duration": 30.0,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text.startswith("WEBVTT")
+    assert response.headers["content-type"].startswith("text/vtt")
+
+    assert captured == {
+        "info_hash": info_hash,
+        "idx": -1,
+        "mediaURL": media_url,
+        "track": 2,
+        "start": 30.0,
+        "duration": 30.0,
+    }
+
+
+
+def test_subtitles_vtt_minus_one_route_is_registered():
+    """stremio-core uses /<infohash>/-1 when fileIdx is implicit.
+
+    The literal subtitle route must exist instead of falling through to
+    unmatched routing because Starlette's {idx:int} does not match -1.
+    """
+    app = create_app()
+
+    paths = {
+        route.path
+        for route in app.routes
+        if hasattr(route, "path")
+    }
+
+    assert "/{info_hash}/-1/subtitles.vtt" in paths
+    assert "/{info_hash}/{idx:int}/subtitles.vtt" in paths

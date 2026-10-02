@@ -117,6 +117,26 @@ def _apply_direct_video_policy(
     return decision
 
 
+
+def _write_single_track_master(out_dir: str | Path) -> Path:
+    """Write the stable master playlist used by single-track browser HLS.
+
+    FFmpeg owns index.m3u8, init.mp4 and the media segments. The application
+    owns this small master so the public /master.m3u8 contract never depends
+    on FFmpeg generating a variant playlist without -var_stream_map.
+    """
+    path = Path(out_dir) / "master.m3u8"
+    tmp = path.with_suffix(".m3u8.tmp")
+    tmp.write_text(
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:7\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=8000000\n"
+        "index.m3u8\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return path
+
 def build_hls_cmd(
     media_url: str,
     decision: dict,
@@ -266,12 +286,14 @@ def build_hls_cmd(
             "-master_pl_name", "master.m3u8", f"{out_dir}/stream_%v.m3u8",
         ]
     else:
+        # Single-track HLS uses a deterministic application-owned master.
+        # FFmpeg owns only the fMP4 media playlist and its media segments.
         argv += [
             "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "event",
             "-hls_segment_type", "fmp4", "-hls_flags", "independent_segments",
             "-hls_fmp4_init_filename", "init.mp4",
             "-hls_segment_filename", f"{out_dir}/seg%d.m4s",
-            "-master_pl_name", "master.m3u8", f"{out_dir}/index.m3u8",
+            f"{out_dir}/index.m3u8",
         ]
     return argv
 
@@ -474,6 +496,12 @@ class Converter:
                     d,
                     self.backend,
                 )
+
+                # Multi-track HLS lets FFmpeg build the master from
+                # -var_stream_map. Single-track HLS has no variant map, so
+                # publish the application-owned master before FFmpeg starts.
+                if len(_hls_audio_tracks(decision)) <= 1:
+                    _write_single_track_master(d)
 
                 log = open(d / "ffmpeg.log", "wb")  # noqa: SIM115
 
