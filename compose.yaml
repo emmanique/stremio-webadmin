@@ -1,0 +1,163 @@
+name: stremio-platform
+
+services:
+  stremio-libtorrent-server:
+    image: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest}"
+    pull_policy: always
+    container_name: stremio-libtorrent-server
+    restart: unless-stopped
+    environment:
+      STREMIOSRV_BT_LISTEN_PORT: "${STREMIOSRV_BT_LISTEN_PORT:-6881}"
+      STREMIOSRV_CACHE_ROOT: /root/.stremio-server
+      STREMIOSRV_EXTERNAL_CONFIG: /config/admin-settings.json
+      CERT_FILE: "${CERT_FILE:-certificates.pem}"
+      STREMIOSRV_CERT_FILE: "${CERT_FILE:-certificates.pem}"
+      IPADDRESS: "${IPADDRESS:-}"
+      SERVER_URL: "${SERVER_URL:-}"
+
+      # Cache / Library addon. The routes only exist when this is enabled. The addon exposes
+      # content already present on the server as a Stremio catalog and local stream source.
+      # Access remains protected by the per-install token plus the private-network/CIDR guard.
+      STREMIOSRV_LIBRARY_UI: "${STREMIOSRV_LIBRARY_UI:-true}"
+      STREMIOSRV_LIBRARY_ALLOW_HTTP: "${STREMIOSRV_LIBRARY_ALLOW_HTTP:-false}"
+      STREMIOSRV_LIBRARY_OWNER: "${STREMIOSRV_LIBRARY_OWNER:-}"
+      STREMIOSRV_LIBRARY_ADDON_ALLOW: "${STREMIOSRV_LIBRARY_ADDON_ALLOW:-}"
+
+      # Fork-owned FFmpeg policy. Values saved in WebAdmin take precedence over
+      # these environment defaults after they are persisted to admin-settings.json.
+      TRANSCODING_MODE: "${TRANSCODING_MODE:-auto}"
+      TRANSCODING_HWACCEL: "${TRANSCODING_HWACCEL:-vaapi}"
+      VAAPI_DEVICE: "${VAAPI_DEVICE:-/dev/dri/renderD128}"
+      TRANSCODING_VIDEO_CODEC: "${TRANSCODING_VIDEO_CODEC:-h264_vaapi}"
+      TRANSCODING_VIDEO_QUALITY: "${TRANSCODING_VIDEO_QUALITY:-22}"
+      TRANSCODING_AUDIO_CODEC: "${TRANSCODING_AUDIO_CODEC:-aac}"
+      TRANSCODING_AUDIO_BITRATE: "${TRANSCODING_AUDIO_BITRATE:-192k}"
+      TRANSCODING_COPY_VIDEO: "${TRANSCODING_COPY_VIDEO:-true}"
+      TRANSCODING_COPY_AUDIO: "${TRANSCODING_COPY_AUDIO:-true}"
+      TRANSCODING_DIRECT_VIDEO_CODECS: "${TRANSCODING_DIRECT_VIDEO_CODECS:-h264}"
+      TRANSCODING_DIRECT_AUDIO_CODECS: "${TRANSCODING_DIRECT_AUDIO_CODECS:-aac,mp3,ac3}"
+      TRANSCODING_FALLBACK_CODEC: "${TRANSCODING_FALLBACK_CODEC:-libx264}"
+      TRANSCODING_HW_DECODE: "${TRANSCODING_HW_DECODE:-true}"
+    dns:
+      - 172.30.0.53
+    ports:
+      - "${IPADDRESS:-0.0.0.0}:8080:8080"
+      - "${IPADDRESS:-0.0.0.0}:11470:11470"
+      - "${IPADDRESS:-0.0.0.0}:12470:12470"
+      - "${IPADDRESS:-0.0.0.0}:${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/tcp"
+      - "${IPADDRESS:-0.0.0.0}:${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/udp"
+    volumes:
+      - ${STREMIO_DATA_DIR:-stremio-cache}:/root/.stremio-server
+      - stremio-config:/config:ro
+    networks:
+      stremio-internal:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      pihole:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:11470/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    devices:
+      - /dev/dri:/dev/dri
+
+  webadmin:
+    image: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest}"
+    pull_policy: always
+    container_name: stremio-webadmin
+    restart: unless-stopped
+    environment:
+      WEBADMIN_STATE: /data
+      STREMIO_CONFIG_FILE: /config/admin-settings.json
+      STREMIO_URL: http://stremio-libtorrent-server:11470
+      STREMIO_CONTAINER: stremio-libtorrent-server
+      STREMIO_IMAGE: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest}"
+      STREMIO_PACKAGE_REPO: "${STREMIO_PACKAGE_REPO:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin}"
+      WEBADMIN_IMAGE: "${WEBADMIN_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin-webadmin:latest}"
+      STREMIO_SOURCE_REPO: "${STREMIO_SOURCE_REPO:-https://github.com/emmanique/stremio-libtorrent-server-webadmin}"
+      STREMIO_SOURCE_BRANCH: "${STREMIO_SOURCE_BRANCH:-main}"
+      STREMIO_UPDATE_HEALTH_TIMEOUT: "${STREMIO_UPDATE_HEALTH_TIMEOUT:-180}"
+      # VPN settings can be prepared in direct mode; start-vpn.sh later reuses
+      # the same private vpn-data volume and injects the control API key.
+      VPN_CONFIG_DIR: /vpn
+      VPN_CONTAINER: stremio-gluetun
+      VPN_CONTROL_URL: http://stremio-gluetun:8000
+      VPN_CONTROL_API_KEY: "${VPN_CONTROL_API_KEY:-}"
+      IPADDRESS: "${IPADDRESS:-localhost}"
+      WEB_PLAYER_URL: "http://${IPADDRESS:-localhost}:8080"
+      SERVER_URL: "http://${IPADDRESS:-localhost}:11470"
+    ports:
+      - "${IPADDRESS:-0.0.0.0}:8090:8090"
+    volumes:
+      - webadmin-data:/data
+      - stremio-config:/config
+      - vpn-data:/vpn
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - stremio-internal
+    depends_on:
+      stremio-libtorrent-server:
+        condition: service_healthy
+
+  pihole:
+    image: pihole/pihole:latest
+    pull_policy: always
+    container_name: stremio-pihole
+    restart: unless-stopped
+    environment:
+      TZ: "${TZ:-Africa/Luanda}"
+      FTLCONF_webserver_api_password: "${PIHOLE_PASSWORD:-}"
+      FTLCONF_dns_listeningMode: all
+      FTLCONF_dns_upstreams: "${PIHOLE_UPSTREAM_DNS:-1.1.1.1;1.0.0.1}"
+
+      # Locked Pi-hole v6 baseline for the Stremio platform.
+      # FTLCONF values are authoritative/read-only in Pi-hole while present as
+      # environment variables, so these settings cannot be changed from the
+      # Pi-hole Web UI, CLI or pihole.toml. Change the Compose baseline in the
+      # repository if the platform policy must be revised.
+      FTL_CMD: "no-daemon -- --dns-forward-max 300"
+      FTLCONF_dns_cache_size: "10000"
+      FTLCONF_dns_cache_optimizer: "3600"
+      FTLCONF_dns_cache_upstreamBlockedTTL: "86400"
+      FTLCONF_dns_domainNeeded: "true"
+      FTLCONF_dns_bogusPriv: "true"
+      FTLCONF_dns_dnssec: "false"
+      FTLCONF_dns_queryLogging: "true"
+      FTLCONF_dns_rateLimit_count: "1000"
+      FTLCONF_dns_rateLimit_interval: "60"
+      FTLCONF_dns_blocking_active: "true"
+      FTLCONF_dns_blocking_mode: "NULL"
+      FTLCONF_database_maxDBdays: "30"
+      FTLCONF_database_DBinterval: "60"
+      FTLCONF_database_useWAL: "true"
+    # DNS stays available to Stremio on the internal Docker network without
+    # occupying host port 53. Use compose.dns.yaml when Pi-hole must also be
+    # exposed as the DNS server for the LAN.
+    expose:
+      - "53/tcp"
+      - "53/udp"
+    ports:
+      - "${PIHOLE_WEB_BIND_IP:-0.0.0.0}:${PIHOLE_WEB_PORT:-8053}:80/tcp"
+    volumes:
+      - pihole-etc:/etc/pihole
+      - pihole-dnsmasq:/etc/dnsmasq.d
+    networks:
+      stremio-internal:
+        ipv4_address: 172.30.0.53
+
+networks:
+  stremio-internal:
+    name: stremio-internal
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  stremio-cache:
+  stremio-config:
+  webadmin-data:
+  pihole-etc:
+  pihole-dnsmasq:
+  vpn-data:
