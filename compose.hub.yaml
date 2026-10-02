@@ -1,0 +1,39 @@
+# Published-image compose for the streaming runtime from THIS fork.
+#
+# This file is intentionally runtime-only. For the complete Server + WebAdmin + Pi-hole
+# stack use compose.yaml, which also pulls published images and requires no local build.
+# Override STREMIO_IMAGE only when a different registry/name is intentionally required:
+#   STREMIO_IMAGE=registry.example/user/stremio-libtorrent-server-webadmin:tag \
+#     IPADDRESS=<server-LAN-IP> docker compose -f compose.hub.yaml up -d
+services:
+  stremio-libtorrent-server:
+    image: "${STREMIO_IMAGE:-ghcr.io/emmanique/stremio-libtorrent-server-webadmin:latest}"
+    pull_policy: always
+    container_name: stremio-libtorrent-server
+    restart: unless-stopped
+    environment:
+      IPADDRESS: "${IPADDRESS:-}"
+      SERVER_URL: "${SERVER_URL:-}"
+      STREMIOSRV_BT_LISTEN_PORT: "${STREMIOSRV_BT_LISTEN_PORT:-6881}"
+      STREMIOSRV_CACHE_ROOT: /root/.stremio-server
+      CERT_FILE: "${CERT_FILE:-certificates.pem}"
+      STREMIOSRV_LIBRARY_UI: "${STREMIOSRV_LIBRARY_UI:-true}"
+      STREMIOSRV_LIBRARY_ALLOW_HTTP: "${STREMIOSRV_LIBRARY_ALLOW_HTTP:-false}"
+      STREMIOSRV_LIBRARY_OWNER: "${STREMIOSRV_LIBRARY_OWNER:-}"
+      STREMIOSRV_LIBRARY_ADDON_ALLOW: "${STREMIOSRV_LIBRARY_ADDON_ALLOW:-}"
+    ports:
+      - "${IPADDRESS:-0.0.0.0}:8080:8080"
+      - "${IPADDRESS:-0.0.0.0}:11470:11470"
+      - "${IPADDRESS:-0.0.0.0}:12470:12470"
+      - "${IPADDRESS:-0.0.0.0}:${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/tcp"
+      - "${IPADDRESS:-0.0.0.0}:${STREMIOSRV_BT_LISTEN_PORT:-6881}:${STREMIOSRV_BT_LISTEN_PORT:-6881}/udp"
+    volumes:
+      - ${STREMIO_DATA_DIR:-stremio-cache}:/root/.stremio-server
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:11470/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  stremio-cache:
