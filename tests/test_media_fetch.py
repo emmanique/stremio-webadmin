@@ -247,6 +247,7 @@ class _FakeHandle:
     """A libtorrent handle just complete enough for wait_and_read to read a file's head off disk."""
     def __init__(self, name: str, size: int, present: bool = True):
         self._name, self._size, self._present = name, size, present
+        self.boosted = []
 
     def has_metadata(self): return True
     def piece_length(self): return 1 << 20   # head sits in piece 0
@@ -255,7 +256,7 @@ class _FakeHandle:
     def file_size(self, i): return self._size
     def num_pieces(self): return 1
     def have_piece(self, p): return self._present
-    def boost_piece(self, *a, **k): pass
+    def boost_piece(self, *a, **k): self.boosted.append((a, k))
 
 
 class _FakeEngine:
@@ -284,6 +285,9 @@ def test_torrent_head_reads_a_real_file_via_the_real_reader(tmp_path):
     r.app.state.engine = _FakeEngine(str(tmp_path), _FakeHandle("movie.mp4", len(mp4)))
     url = f"http://127.0.0.1:11470/{IH}/0"
     assert media_fetch.resolve_media_input(r, url) == url  # a real container passes untouched
+    # The guard must rush the bytes it is waiting for instead of passively polling the swarm.
+    assert r.app.state.engine._h.boosted
+    assert r.app.state.engine._h.boosted[0][0][0] == 0
 
 
 def test_head_never_arriving_refuses_rather_than_falls_through(tmp_path):

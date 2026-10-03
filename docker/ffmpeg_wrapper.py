@@ -213,18 +213,22 @@ def _probe_video_format(args: list[str]) -> dict[str, str]:
 
 
 def _unsafe_full_vaapi_decode(details: dict[str, str]) -> bool:
-    """Conservatively avoid full-GPU decode for high-bit-depth sources.
+    """Reject only source formats that the VAAPI path cannot safely classify.
 
-    Encode still stays on VAAPI; only decode falls back to software. This is
-    intentionally narrow and based on a real failing HEVC Main 10 stream.
+    HEVC Main 10 is a normal VAAPI decode workload on the validated Intel/iHD
+    backend.  3.0.8 treated every 10-bit HEVC source as unsafe and forced CPU
+    decode, which made real-time HLS fall below 1x on production.  Keep the
+    conservative fallback for high-bit-depth H.264 and unknown >10-bit HEVC;
+    Main/Main10 HEVC may stay fully on the GPU.
     """
     codec = details.get("codec_name", "").lower()
     pix_fmt = details.get("pix_fmt", "").lower()
     profile = details.get("profile", "").lower()
-    high_bit_depth = any(token in pix_fmt for token in ("10", "12", "p010"))
-    return codec in {"hevc", "h264"} and (
-        high_bit_depth or "main 10" in profile or "high 10" in profile
-    )
+    if codec == "hevc":
+        return "12" in pix_fmt or "main 12" in profile
+    if codec == "h264":
+        return any(token in pix_fmt for token in ("10", "12", "p010")) or "high 10" in profile
+    return False
 
 
 def _remove_option(args: list[str], names: set[str]) -> list[str]:
