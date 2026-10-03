@@ -35,6 +35,12 @@ The new deployment settings are:
 
 The VPN Gateway remains unchanged at the previously validated 3.0.6 image.
 
+Official 3.0.8 container images:
+
+- `ghcr.io/emmanique/stremio-server:3.0.8`
+- `ghcr.io/emmanique/stremio-webadmin:3.0.8`
+- `ghcr.io/emmanique/stremio-vpn:3.0.6`
+
 See `docs/releases/v3.0.8.md` for validation and upgrade details.
 
 ## 3.0.7 — Web Player playback corrections
@@ -55,8 +61,8 @@ Version 3.0.6 introduces the separated private-development and public-distributi
 
 Official stable container images:
 
-- `ghcr.io/emmanique/stremio-server:3.0.8`
-- `ghcr.io/emmanique/stremio-webadmin:3.0.8`
+- `ghcr.io/emmanique/stremio-server:3.0.6`
+- `ghcr.io/emmanique/stremio-webadmin:3.0.6`
 - `ghcr.io/emmanique/stremio-vpn:3.0.6`
 
 The Stremio Server/Core remains at version 1.6.22.
