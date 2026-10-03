@@ -55,8 +55,8 @@ Version 3.0.6 introduces the separated private-development and public-distributi
 
 Official stable container images:
 
-- `ghcr.io/emmanique/stremio-server:3.0.6`
-- `ghcr.io/emmanique/stremio-webadmin:3.0.6`
+- `ghcr.io/emmanique/stremio-server:3.0.8`
+- `ghcr.io/emmanique/stremio-webadmin:3.0.8`
 - `ghcr.io/emmanique/stremio-vpn:3.0.6`
 
 The Stremio Server/Core remains at version 1.6.22.
