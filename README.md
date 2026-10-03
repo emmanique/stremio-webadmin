@@ -24,6 +24,14 @@ downloading, and makes embedded subtitle discovery available earlier on incomple
 
 No new environment variables or persistent-state migrations are required.
 
+Official 3.0.9 container images:
+
+- `ghcr.io/emmanique/stremio-server:3.0.9`
+- `ghcr.io/emmanique/stremio-webadmin:3.0.9`
+- `ghcr.io/emmanique/stremio-vpn:3.0.6`
+
+See `docs/releases/v3.0.9.md` for validation and upgrade details.
+
 ## 3.0.8 — Web Player persistence and host disk protection
 
 Version 3.0.8 integrates the Server/Core 1.6.23 Web Player loader correction

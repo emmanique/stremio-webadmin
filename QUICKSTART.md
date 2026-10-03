@@ -60,8 +60,8 @@ pihole/pihole:latest
 You can pin the coordinated release in `.env`:
 
 ```env
-STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.8
-WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.8
+STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.9
+WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.9
 VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.6
 ```
 
