@@ -11,6 +11,11 @@ WORKDIR /srv/app
 COPY pyproject.toml uv.lock README.md LICENSE SERVER_VERSION FORK_VERSION ./
 COPY src ./src
 COPY docker ./docker
+
+# Upstream 1.6.23 Web Player fix:
+# seed SERVER_URL initially, but preserve a streaming-server URL
+# subsequently selected manually by the user.
+RUN sh docker/install-web-player-loader.sh /srv/stremio-server/build docker/web-player-loader.js
 RUN set -eux; \
     mkdir -p /usr/local/libexec/stremio; \
     ln -sf "$(readlink -f "$(command -v ffmpeg)")" /usr/local/libexec/stremio/ffmpeg-real; \

@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     cache_root: str = "/root/.stremio-server"
     cert_file: str = "certificates.pem"  # active TLS cert (in cache_root); watched by /health
     cache_size: ByteSize = 19_327_352_832  # 18 GiB download-cache budget (must exceed your largest file)
+    # Ordinary downloads are evictable cache, but they must never consume the filesystem's
+    # operational reserve. The effective reserve is the strongest of the upstream 2 GiB/2%
+    # floor and these operator-configurable host limits.
+    host_min_free_gb: float = 10.0
+    host_min_free_percent: float = 10.0
     cache_evict_interval: int = 60  # seconds between eviction sweeps
     # Don't evict torrents served within this many seconds. 30 min, not 5: the grace is refreshed by
     # each byte-range request, and a 4K player that pulls a large chunk then plays it back locally

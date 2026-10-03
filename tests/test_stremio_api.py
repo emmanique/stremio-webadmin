@@ -67,3 +67,16 @@ def test_error_detail_is_not_leaked_into_the_message_the_caller_shows():
         api.login("a@b.c", "pw", transport=t)
     assert not hasattr(e.value, "wrongEmail")
     assert e.value.code == 2
+
+
+def test_get_addons_requests_remote_collection():
+    t = _transport({"result": {"addons": [{"transportUrl": "https://a/manifest.json"}]}})
+    assert api.get_addons("k", transport=t)[0]["transportUrl"] == "https://a/manifest.json"
+    assert t.seen[1] == {"authKey": "k", "update": True}
+
+
+def test_set_addons_preserves_supplied_descriptors():
+    addons = [{"manifest": {"id": "one"}, "transportUrl": "https://a/manifest.json", "flags": {}}]
+    t = _transport({"result": {"success": True}})
+    assert api.set_addons("k", addons, transport=t)["success"] is True
+    assert t.seen[1] == {"authKey": "k", "addons": addons}

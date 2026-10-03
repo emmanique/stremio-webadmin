@@ -425,3 +425,17 @@ def test_single_track_master_contains_real_newlines(tmp_path):
         "#EXT-X-STREAM-INF:BANDWIDTH=8000000",
         "index.m3u8",
     ]
+
+
+def test_incomplete_torrent_hls_input_is_paced_at_realtime():
+    decision = dict(DEC_TRANSCODE)
+    decision["_realtimeInput"] = True
+    cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
+    i = cmd.index("-i")
+    assert cmd[i - 1] == "-re"
+    assert cmd[i + 1] == "http://x/0"
+
+
+def test_complete_hls_input_is_not_realtime_paced():
+    cmd = build_hls_cmd("http://x/0", DEC_TRANSCODE, None, "/tmp/j")
+    assert "-re" not in cmd

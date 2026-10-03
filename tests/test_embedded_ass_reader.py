@@ -99,6 +99,28 @@ def test_a_range_past_the_end_is_416(engine):
     assert r.headers["content-range"] == f"bytes */{len(DATA)}"
 
 
+def test_finite_prefix_reader_exposes_virtual_eof(engine):
+    limit = 1536
+    r = _client(engine).get(_path() + f"?limit={limit}", headers={"Range": "bytes=1024-4095"})
+    assert r.status_code == 206
+    assert r.content == DATA[1024:limit]
+    assert r.headers["content-range"] == f"bytes 1024-{limit - 1}/{limit}"
+    assert r.headers["content-length"] == str(limit - 1024)
+    past = _client(engine).get(_path() + f"?limit={limit}", headers={"Range": f"bytes={limit}-"})
+    assert past.status_code == 416
+    assert past.headers["content-range"] == f"bytes */{limit}"
+
+
+def test_reader_url_can_carry_a_finite_prefix(engine):
+    from stremiosrv.config import Settings
+    app = create_app(settings=Settings(http_port=12345), engine=engine)
+    class Req:
+        pass
+    req = Req()
+    req.app = app
+    assert embedded_ass.reader_url(req, IH, 0, limit=2048).endswith(f"/{IH}/0?limit=2048")
+
+
 @pytest.mark.parametrize("why", ["wrong secret", "not loopback", "came through nginx"])
 def test_anyone_but_this_process_s_ffmpeg_gets_404(engine, why):
     client = _client(engine, host="192.168.1.20" if why == "not loopback" else "127.0.0.1")

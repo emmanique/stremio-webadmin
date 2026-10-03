@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from stremiosrv.app import create_app
@@ -209,20 +211,25 @@ def test_master_advertises_embedded_subtitles_without_ffmpeg_subtitle_muxing():
         "streams": [
             {"index": 0, "track": "video", "codec": "hevc"},
             {"index": 1, "track": "audio", "codec": "aac", "lang": "eng"},
-            {"index": 31, "track": "subtitle", "codec": "subrip", "lang": "por"},
-            {"index": 32, "track": "subtitle", "codec": "subrip", "lang": "por"},
+            {"index": 31, "track": "subtitle", "codec": "subrip", "lang": "por", "title": "Forced", "forced": True},
+            {"index": 32, "track": "subtitle", "codec": "ass", "lang": "por", "title": "Regular Full"},
+            {"index": 33, "track": "subtitle", "codec": "subrip", "lang": "eng", "title": "SDH", "hearingImpaired": True},
         ],
     }
     media = "https://host/" + "a" * 40 + "/0?"
     out = _master_with_subtitles(master, probe, media)
 
-    assert out.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 2
+    assert out.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 3
     assert 'GROUP-ID="subs"' in out
     assert 'LANGUAGE="por"' in out
-    assert 'NAME="por"' in out
-    assert 'NAME="por (2)"' in out
+    assert 'LANGUAGE="eng"' in out
+    assert 'NAME="por — Forced"' in out
+    assert 'NAME="por — Regular Full"' in out
+    assert 'NAME="eng — SDH"' in out
+    assert 'FORCED=YES' in out
     assert "subtitles/31.m3u8?" in out
     assert "subtitles/32.m3u8?" in out
+    assert "subtitles/33.m3u8?" in out
     assert 'SUBTITLES="subs"' in out
     # Regression for 2.0.13: no FFmpeg var_stream_map subtitle-only metadata such as sname appears.
     assert "sname:" not in out
@@ -339,3 +346,96 @@ def test_master_refuses_hls_format_input():
         r = c.get("/hlsv2/00000000/master.m3u8",
                   params={"mediaURL": "http://127.0.0.1:11470/aabb/0"})
     assert r.status_code == 415
+
+# --- transient torrent-head readiness -------------------------------------------------------------
+
+def test_hls_media_resolve_retries_one_readiness_504(monkeypatch):
+    from fastapi import HTTPException
+    from stremiosrv.api import hls
+
+    calls = []
+
+    def resolve(request, url):
+        calls.append(url)
+        if len(calls) == 1:
+            raise HTTPException(status_code=504, detail="media source too slow")
+        return "http://safe/resolved"
+
+    monkeypatch.setattr(hls, "resolve_media_input", resolve)
+    monkeypatch.setattr(hls.time, "sleep", lambda _: None)
+    assert hls._resolve_media_for_hls(object(), "http://source") == "http://safe/resolved"
+    assert calls == ["http://source", "http://source"]
+
+
+def test_hls_media_resolve_keeps_second_readiness_504(monkeypatch):
+    from fastapi import HTTPException
+    from stremiosrv.api import hls
+
+    calls = []
+
+    def resolve(request, url):
+        calls.append(url)
+        raise HTTPException(status_code=504, detail="media source too slow")
+
+    monkeypatch.setattr(hls, "resolve_media_input", resolve)
+    monkeypatch.setattr(hls.time, "sleep", lambda _: None)
+    with pytest.raises(HTTPException) as exc:
+        hls._resolve_media_for_hls(object(), "http://source")
+    assert exc.value.status_code == 504
+    assert calls == ["http://source", "http://source"]
+
+
+@pytest.mark.parametrize("status,detail", [
+    (403, "media source not allowed"),
+    (415, "playlist inputs are not accepted"),
+    (504, "probe timed out"),
+])
+def test_hls_media_resolve_never_retries_other_failures(monkeypatch, status, detail):
+    from fastapi import HTTPException
+    from stremiosrv.api import hls
+
+    calls = []
+
+    def resolve(request, url):
+        calls.append(url)
+        raise HTTPException(status_code=status, detail=detail)
+
+    monkeypatch.setattr(hls, "resolve_media_input", resolve)
+    monkeypatch.setattr(hls.time, "sleep", lambda _: None)
+    with pytest.raises(HTTPException) as exc:
+        hls._resolve_media_for_hls(object(), "http://source")
+    assert exc.value.status_code == status
+    assert calls == ["http://source"]
+
+
+def test_torrent_input_pacing_only_when_current_wanted_data_is_incomplete():
+    from types import SimpleNamespace
+    from stremiosrv.api import hls
+
+    class Handle:
+        def __init__(self, finished):
+            self.finished = finished
+        def is_finished(self):
+            return self.finished
+
+    class Engine:
+        def __init__(self, handle):
+            self.handle = handle
+        def get(self, info_hash):
+            return self.handle
+
+    url = "https://127.0.0.1:12470/" + ("a" * 40) + "/0"
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=Engine(Handle(False)))))
+    assert hls._torrent_input_is_incomplete(request, url) is True
+    request.app.state.engine = Engine(Handle(True))
+    assert hls._torrent_input_is_incomplete(request, url) is False
+
+def test_subtitle_media_playlist_propagates_mpegts_start():
+    from stremiosrv.api import hls as hls_api
+
+    info_hash = "a" * 40
+    media = f"https://host/{info_hash}/0?"
+    body = hls_api._subtitle_media_playlist(media, 10, 60.0, 129750)
+
+    assert "mpegtsStart=129750" in body
+    assert body.count("mpegtsStart=129750") == 2

@@ -18,6 +18,26 @@ def test_cache_list_shape(monkeypatch):
     ]
 
 
+
+def test_cache_list_hides_libtorrent_partfiles_but_cache_accounting_keeps_them(monkeypatch, tmp_path):
+    """A .<infohash>.parts is disk/cache data, not a second playable title in WebAdmin."""
+    from stremiosrv import cache as cachemod
+    from stremiosrv.config import Settings
+
+    ih = "e03ad7d6bc23ad83fd2a153aadeaa3777dbec956"
+    root = tmp_path / "cache"
+    root.mkdir()
+    (root / "Toy Story 5.mkv").write_bytes(b"x" * 1024)
+    (root / f".{ih}.parts").write_bytes(b"y" * 2048)
+
+    client = TestClient(create_app(settings=Settings(cache_root=str(root))))
+    names = [row["name"] for row in client.get("/cache.json").json()]
+    assert names == ["Toy Story 5.mkv"]
+    # UI filtering must not make the partfile disappear from cache pressure/accounting.
+    scanned = cachemod.scan_cache(str(root))
+    assert any(row["name"] == f".{ih}.parts" for row in scanned)
+    assert cachemod.usage(str(root), 10_000)["cacheUsed"] >= 3072
+
 def test_cache_list_marks_active(monkeypatch):
     from stremiosrv import cache as cachemod
     monkeypatch.setattr(

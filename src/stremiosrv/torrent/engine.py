@@ -558,6 +558,29 @@ class Handle:
         """Which file is being played (None before the first focus_file)."""
         return self._focused_idx
 
+    def file_contiguous_prefix(self, idx: int) -> int:
+        """Bytes of file `idx` safely readable from byte 0 before the first missing piece.
+
+        A torrent file may start/end inside shared pieces. Count only the portion belonging to this
+        file, and never infer availability from the sparse file's logical size on disk.
+        """
+        ti = self._h.torrent_file()
+        if ti is None:
+            return 0
+        fs = ti.files()
+        size = fs.file_size(idx)
+        if size <= 0:
+            return 0
+        plen = ti.piece_length()
+        off = fs.file_offset(idx)
+        first = off // plen
+        last = (off + size - 1) // plen
+        for piece in range(first, last + 1):
+            if not self._h.have_piece(piece):
+                boundary = piece * plen
+                return max(0, min(size, boundary - off))
+        return size
+
     def file_complete(self, idx: int) -> bool:
         """True when every piece covering file `idx` is on disk. Short-circuits on the first hole."""
         ti = self._h.torrent_file()

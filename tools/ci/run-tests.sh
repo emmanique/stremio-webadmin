@@ -11,13 +11,13 @@ mode="${1:-deterministic}"
 
 case "$mode" in
   deterministic)
-    timeout 600s uv run --frozen --with-requirements webadmin/requirements.txt pytest -q -m "not integration" tests
+    timeout 600s uv run --frozen --with pytest --with-requirements webadmin/requirements.txt python -m pytest -q -m "not integration" tests
     ;;
   integration)
     ok=0
     for attempt in 1 2 3; do
       echo "Integration attempt $attempt/3"
-      if timeout 300s uv run --frozen --with-requirements webadmin/requirements.txt pytest -q -m integration tests; then
+      if timeout 300s uv run --frozen --with pytest --with-requirements webadmin/requirements.txt python -m pytest -q -m integration tests; then
         ok=1
         break
       fi

@@ -101,7 +101,15 @@ def map_probe(ffprobe_json: dict) -> dict:
         elif ct == "audio":
             entry.update(channels=s.get("channels"), lang=(s.get("tags") or {}).get("language"))
         elif ct == "subtitle":
-            entry["lang"] = (s.get("tags") or {}).get("language")
+            tags = s.get("tags") or {}
+            disposition = s.get("disposition") or {}
+            entry.update(
+                lang=tags.get("language"),
+                title=tags.get("title"),
+                default=bool(disposition.get("default")),
+                forced=bool(disposition.get("forced")),
+                hearingImpaired=bool(disposition.get("hearing_impaired")),
+            )
         streams.append(entry)
     duration = fmt.get("duration")
     return {

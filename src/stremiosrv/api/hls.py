@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -31,6 +32,37 @@ def _converter(request: Request):
 
 def _playback_registry(request: Request):
     return getattr(request.app.state, "playback_registry", None)
+
+
+def _torrent_input_is_incomplete(request: Request, media_url: str) -> bool:
+    """True only for a local torrent stream whose currently-wanted data is incomplete."""
+    parsed = parse_stream_url(media_url)
+    engine = getattr(request.app.state, "engine", None)
+    if parsed is None or engine is None:
+        return False
+    try:
+        handle = engine.get(parsed[0])
+        return handle is not None and not handle.is_finished()
+    except Exception:  # best-effort pacing hint; never changes playback admission
+        return False
+
+
+def _resolve_media_for_hls(request: Request, media_url: str) -> str:
+    """Resolve an HLS input, retrying once when a torrent head is not ready yet.
+
+    The retry deliberately calls resolve_media_input() again instead of bypassing the
+    guard: each attempt must re-read and validate the torrent head before ffprobe is
+    allowed to open it. Only the readiness-specific 504 is retried; 403/415 and every
+    other error remain final.
+    """
+    try:
+        return resolve_media_input(request, media_url)
+    except HTTPException as exc:
+        if exc.status_code != 504 or exc.detail != "media source too slow":
+            raise
+        logger.info("media source head not ready; retrying HLS preparation once")
+        time.sleep(0.35)
+        return resolve_media_input(request, media_url)
 
 
 def _wait_file(path: Path, timeout: float) -> bool:
@@ -73,14 +105,25 @@ def _master_with_subtitles(master_text: str, probe: dict, media_url: str) -> str
     for stream in tracks:
         track = int(stream["index"])
         lang = str(stream.get("lang") or "und")
-        seen_names[lang] = seen_names.get(lang, 0) + 1
-        name = lang if seen_names[lang] == 1 else f"{lang} ({seen_names[lang]})"
+        title = str(stream.get("title") or "").strip()
+        qualifiers: list[str] = []
+        if title:
+            qualifiers.append(title)
+        elif stream.get("forced"):
+            qualifiers.append("Forced")
+        elif stream.get("hearingImpaired"):
+            qualifiers.append("Hearing Impaired")
+        base_name = f"{lang} — {' / '.join(qualifiers)}" if qualifiers else lang
+        seen_names[base_name] = seen_names.get(base_name, 0) + 1
+        ordinal = seen_names[base_name]
+        name = base_name if ordinal == 1 else f"{base_name} ({ordinal})"
         query = urlencode({"mediaURL": media_url, "duration": duration})
         uri = f"subtitles/{track}.m3u8?{query}"
         media_lines.append(
             '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",'
             f'NAME="{_hls_quote(name)}",LANGUAGE="{_hls_quote(lang)}",'
-            f'AUTOSELECT=YES,DEFAULT=NO,FORCED=NO,URI="{_hls_quote(uri)}"'
+            f'AUTOSELECT=YES,DEFAULT={"YES" if stream.get("default") else "NO"},'
+            f'FORCED={"YES" if stream.get("forced") else "NO"},URI="{_hls_quote(uri)}"'
         )
 
     out: list[str] = []
@@ -97,7 +140,7 @@ def _master_with_subtitles(master_text: str, probe: dict, media_url: str) -> str
     return "\n".join(out) + ("\n" if master_text.endswith("\n") else "")
 
 
-def _subtitle_media_playlist(media_url: str, track: int, duration: float) -> str:
+def _subtitle_media_playlist(media_url: str, track: int, duration: float, mpegts_start: int = 0) -> str:
     """Build a VOD WebVTT media playlist with finite extraction windows."""
     parsed = parse_stream_url(media_url)
     if parsed is None:
@@ -121,6 +164,7 @@ def _subtitle_media_playlist(media_url: str, track: int, duration: float) -> str
             "track": track,
             "start": f"{offset:.3f}",
             "duration": f"{length:.3f}",
+            "mpegtsStart": int(mpegts_start),
         })
         lines += [
             f"#EXTINF:{length:.3f},",
@@ -146,7 +190,7 @@ def _subtitle_media_playlist(media_url: str, track: int, duration: float) -> str
 
 @router.api_route("/probe", methods=["GET", "HEAD"])
 def probe(mediaURL: str, request: Request) -> dict:
-    media = resolve_media_input(request, mediaURL)
+    media = _resolve_media_for_hls(request, mediaURL)
     try:
         pr = probe_media(media)
     except ProbeTimeoutError as e:
@@ -169,7 +213,7 @@ def master(
     conv = _converter(request)
     if conv is None:
         raise HTTPException(status_code=503, detail="transcoder unavailable")
-    media = resolve_media_input(request, mediaURL)
+    media = _resolve_media_for_hls(request, mediaURL)
     try:
         pr = probe_media(media)
     except ProbeTimeoutError as e:
@@ -199,6 +243,10 @@ def master(
     # the full probed stream inventory as private converter metadata so HLS can expose alternate
     # audio and text-subtitle renditions without changing the public fingerprint contract.
     dec["_streams"] = list(pr.get("streams") or [])
+    # A hardware transcoder can consume an incomplete torrent much faster than playback time,
+    # outrunning the swarm and repeatedly stalling on the next missing piece. Pace only that case.
+    # Complete/cache-backed media keeps the normal faster-than-realtime HLS warm-up behaviour.
+    dec["_realtimeInput"] = _torrent_input_is_incomplete(request, mediaURL)
     try:
         d = conv.ensure_job(job_id, media, dec)
     except ValueError as e:
@@ -231,6 +279,40 @@ def master(
     return Response(content=body, media_type=_M3U8)
 
 
+def _hls_mpegts_start(conv, job_id: str) -> int:
+    """Return the MPEG-TS clock at HLS timeline zero (90 kHz), derived from this workload."""
+    try:
+        master = conv.job_file(job_id, "master.m3u8")
+        if not _wait_file(master, 5):
+            return 0
+        variants = [line.strip() for line in master.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.startswith("#")]
+        if not variants:
+            return 0
+        playlist = conv.job_file(job_id, variants[0])
+        if not _wait_file(playlist, 5):
+            return 0
+        segments = [line.strip() for line in playlist.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.startswith("#")]
+        if not segments:
+            return 0
+        segment = conv.job_file(job_id, segments[0])
+        if not _wait_file(segment, 5):
+            return 0
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=start_time",
+             "-of", "default=nw=1:nk=1", str(segment)],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if proc.returncode != 0:
+            return 0
+        seconds = float(proc.stdout.strip())
+        return max(0, round(seconds * 90000))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        logger.debug("unable to derive HLS MPEG-TS start", exc_info=True)
+        return 0
+
+
 @router.api_route("/{job_id}/subtitles/{track:int}.m3u8", methods=["GET", "HEAD"])
 def subtitle_playlist(job_id: str, track: int, request: Request, mediaURL: str, duration: float = 0.0):
     conv = _converter(request)
@@ -239,7 +321,8 @@ def subtitle_playlist(job_id: str, track: int, request: Request, mediaURL: str, 
     # Mark subtitle playlist traffic as playback activity so the A/V transcode is not reaped while a
     # browser is actively consuming the subtitle rendition.
     conv.touch(job_id)
-    body = _subtitle_media_playlist(mediaURL, track, duration)
+    mpegts_start = _hls_mpegts_start(conv, job_id)
+    body = _subtitle_media_playlist(mediaURL, track, duration, mpegts_start)
     logger.debug(
         "subtitle trace: stage=playlist method=%s track=%s",
         request.method,

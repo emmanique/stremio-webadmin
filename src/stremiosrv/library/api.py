@@ -24,9 +24,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from stremiosrv import space as spacemod
 from stremiosrv import cache as cachemod
 from stremiosrv import certcheck
 from stremiosrv.library import authmode, stremio_api
+from stremiosrv.library import addon_model as addonmodel
+from stremiosrv.library import netguard
 from stremiosrv.library import labels as labelsmod
 from stremiosrv.library import session as sessionmod
 from stremiosrv.library import state as statemod
@@ -60,6 +63,9 @@ class LoginBody(BaseModel):
 class DownloadBody(BaseModel):
     magnet: str
     label: dict | None = None
+    # Best known size of the release selected by the browser. Zero/None means unknown.
+    # This is only an admission estimate; libtorrent remains authoritative for actual files.
+    candidateSize: int | None = None
     # Which file of the torrent was actually chosen. Addons sometimes give one outright; otherwise
     # the label's season/episode identifies it once the file list exists. Without either, a pin
     # means the whole torrent -- which for a season pack is tens of gigabytes for one episode.
@@ -171,6 +177,14 @@ def config(request: Request) -> dict:
             "certShared": authmode.is_shared_cert(san)}
 
 
+def _library_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("stremiosrv")
+    except Exception:
+        return "0.0.0"
+
+
 def _addon_url(request: Request, token: str) -> str:
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     host = request.headers.get("host") or request.url.netloc
@@ -182,6 +196,62 @@ def addon_link(request: Request) -> dict:
     """Where to install the addon from. Session-guarded: the URL contains the token."""
     s = _settings(request)
     return {"url": _addon_url(request, sessionmod.ensure_addon_token(s.cache_root))}
+
+
+@router.post("/api/addon/ensure")
+def ensure_account_addon(body: SessionBody, request: Request) -> dict:
+    """Install or refresh My Library in the Stremio account currently signed into this Web Player.
+
+    This deliberately does not use the Library owner pin: switching Stremio accounts in the local
+    player is a supported operation. The boundary is instead the same private-network allow-list as
+    the addon itself, plus a valid Stremio authKey and same-origin POST. The authKey is used for this
+    request only and is never persisted.
+    """
+    _require_same_origin(request)
+    s = _settings(request)
+    peer = request.client.host if request.client else ""
+    ip = netguard.client_ip(peer, request.headers.get("x-forwarded-for", ""))
+    if not netguard.is_allowed(ip, netguard.parse_allow(s.library_addon_allow)):
+        raise HTTPException(status_code=404)
+    try:
+        user = stremio_api.get_user(body.authKey)
+    except stremio_api.StremioApiError:
+        raise HTTPException(status_code=401, detail="invalid Stremio session") from None
+
+    # Optional account lock. With no configured owner, every valid account used in this local Web
+    # Player follows the automatic install flow. When STREMIOSRV_LIBRARY_OWNER is set, it is an
+    # explicit allow-list of one account (id or email): never even read/write the addon collection
+    # of a different account. This is deliberately separate from the historical TOFU owner pin.
+    if s.library_owner and s.library_owner not in (str(user.get("_id") or ""),
+                                                    str(user.get("email") or "")):
+        return {"ok": True, "changed": False, "allowed": False,
+                "userId": user.get("_id")}
+    try:
+        addons = stremio_api.get_addons(body.authKey)
+    except stremio_api.StremioApiError:
+        raise HTTPException(status_code=502, detail="could not read Stremio addons") from None
+
+    url = _addon_url(request, sessionmod.ensure_addon_token(s.cache_root))
+    wanted = {"manifest": addonmodel.manifest(_library_version()),
+              "transportUrl": url, "flags": {}}
+    mine = [i for i, a in enumerate(addons)
+            if ((a.get("manifest") or {}).get("id") == addonmodel.ADDON_ID)]
+    if len(mine) == 1 and addons[mine[0]].get("transportUrl") == url:
+        return {"ok": True, "changed": False, "allowed": True,
+                "userId": user.get("_id")}
+
+    # Replace every stale descriptor for this addon with one canonical descriptor at the first
+    # one's position. All unrelated addons and their order are preserved byte-for-byte as objects.
+    pos = mine[0] if mine else len(addons)
+    kept = [a for a in addons if ((a.get("manifest") or {}).get("id") != addonmodel.ADDON_ID)]
+    pos = min(pos, len(kept))
+    kept.insert(pos, wanted)
+    try:
+        stremio_api.set_addons(body.authKey, kept)
+    except stremio_api.StremioApiError:
+        raise HTTPException(status_code=502, detail="could not update Stremio addons") from None
+    return {"ok": True, "changed": True, "allowed": True,
+            "userId": user.get("_id")}
 
 
 @router.post("/api/addon/reset", dependencies=[Depends(require_session)])
@@ -256,7 +326,20 @@ def destroy_session(request: Request, response: Response) -> dict:
 @router.get("/api/state", dependencies=[Depends(require_session)])
 def state(request: Request) -> dict:
     s = _settings(request)
-    return statemod.build(s.cache_root, request.app.state.engine, budget=int(s.cache_size))
+    out = statemod.build(s.cache_root, request.app.state.engine, budget=int(s.cache_size))
+    b = out.setdefault("budget", {})
+    reserve = spacemod.reserve_bytes(
+        int(b.get("diskTotal") or 0),
+        host_min_free_bytes=max(0, int(float(s.host_min_free_gb) * spacemod.GIB)),
+        host_min_free_percent=max(0.0, float(s.host_min_free_percent)),
+    )
+    b["hostReserve"] = reserve
+    b["downloadAvailable"] = spacemod.available_bytes(
+        int(b.get("diskFree") or 0),
+        int(b.get("committed") or 0),
+        reserve,
+    )
+    return out
 
 
 def _player_link(body: PlayerLinkBody) -> str:
@@ -326,7 +409,46 @@ def download(body: DownloadBody, request: Request) -> dict:
     """
     if not body.magnet.startswith("magnet:"):
         raise HTTPException(status_code=400, detail="a magnet URI is required")
+
+    s = _settings(request)
     eng = _engine_or_503(request)
+
+    # Reject before eng.add(): a refused request must not leave a torrent in the session.
+    # `committed` is the unwritten remainder of downloads already in flight.
+    current = statemod.build(s.cache_root, eng, budget=int(s.cache_size))
+    budget = current.get("budget") or {}
+    disk_free = int(budget.get("diskFree") or 0)
+    disk_total = int(budget.get("diskTotal") or 0)
+    committed = int(budget.get("committed") or 0)
+    candidate = max(0, int(body.candidateSize or 0))
+
+    reserve = spacemod.reserve_bytes(
+        disk_total,
+        host_min_free_bytes=max(0, int(float(s.host_min_free_gb) * spacemod.GIB)),
+        host_min_free_percent=max(0.0, float(s.host_min_free_percent)),
+    )
+
+    if not spacemod.download_fits(
+        disk_free,
+        disk_total,
+        committed,
+        candidate,
+        host_min_free_bytes=max(0, int(float(s.host_min_free_gb) * spacemod.GIB)),
+        host_min_free_percent=max(0.0, float(s.host_min_free_percent)),
+    ):
+        available = spacemod.available_bytes(disk_free, committed, reserve)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "insufficient_space",
+                "needed": candidate,
+                "free": disk_free,
+                "committed": committed,
+                "reserve": reserve,
+                "available": available,
+            },
+        )
+
     try:
         handle = eng.add(body.magnet)
     except Exception as e:  # noqa: BLE001 - a magnet libtorrent cannot parse is a bad request

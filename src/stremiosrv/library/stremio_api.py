@@ -67,3 +67,17 @@ def login(email: str, password: str, *, transport=None) -> dict:
     """Exchange credentials for `{authKey, user}`. The password is used here and discarded — it is
     never stored, never logged, and never written to the state file."""
     return _call("login", {"email": email, "password": password}, transport=transport)
+
+
+def get_addons(auth_key: str, *, transport=None) -> list[dict]:
+    """Return the account's current addon descriptors without changing their order."""
+    result = _call("addonCollectionGet", {"authKey": auth_key, "update": True}, transport=transport)
+    addons = result.get("addons")
+    if not isinstance(addons, list):
+        raise StremioApiError(-1, "malformed addon collection")
+    return [a for a in addons if isinstance(a, dict)]
+
+
+def set_addons(auth_key: str, addons: list[dict], *, transport=None) -> dict:
+    """Replace the account addon collection with the supplied descriptors."""
+    return _call("addonCollectionSet", {"authKey": auth_key, "addons": addons}, transport=transport)

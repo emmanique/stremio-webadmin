@@ -60,10 +60,11 @@ READER_TIMEOUT = 10.0
 _INFOHASH = re.compile(r"[0-9a-f]{40}")
 
 
-def reader_url(request: Request, info_hash: str, idx: int) -> str:
-    """The URL ffmpeg reads file `idx` of torrent `info_hash` from."""
+def reader_url(request: Request, info_hash: str, idx: int, limit: int | None = None) -> str:
+    """The URL ffmpeg reads file `idx` from; optional limit exposes a finite safe prefix."""
     port = request.app.state.settings.http_port
-    return f"http://127.0.0.1:{port}{READER_PREFIX}/{_SECRET}/{info_hash}/{idx}"
+    url = f"http://127.0.0.1:{port}{READER_PREFIX}/{_SECRET}/{info_hash}/{idx}"
+    return f"{url}?limit={max(0, limit)}" if limit is not None else url
 
 
 def _is_own_ffmpeg(request: Request, secret: str) -> bool:
@@ -91,7 +92,9 @@ def _playing(request: Request, info_hash: str, idx: int):
 
 
 @router.get(READER_PREFIX + "/{secret}/{info_hash}/{idx}", include_in_schema=False)
-def private_reader(secret: str, info_hash: str, idx: int, request: Request) -> Response:
+def private_reader(
+    secret: str, info_hash: str, idx: int, request: Request, limit: int | None = Query(default=None, ge=1)
+) -> Response:
     """Byte ranges of a torrent file for ffmpeg, waiting for pieces like the stream route does.
 
     Unlike it: never `refocus()` or `focus_file()`, no stall or timeout counted, the torrent never
@@ -103,6 +106,10 @@ def private_reader(secret: str, info_hash: str, idx: int, request: Request) -> R
     if h is None:
         return Response(status_code=404)
     total = h.file_size(idx)
+    if limit is not None:
+        total = min(total, limit)
+    if total <= 0:
+        return Response(status_code=416, headers={"Content-Range": "bytes */0"})
     start, end = parse_range(request.headers.get("Range"), total)
     if start >= total:
         return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})

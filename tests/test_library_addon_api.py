@@ -57,3 +57,73 @@ def test_both_routes_need_a_session(tmp_path):
     c = anonymous_client(tmp_path)
     assert c.get("/library/api/addon").status_code in (401, 403)
     assert c.post("/library/api/addon/reset").status_code in (401, 403)
+
+
+def test_account_ensure_is_idempotent_and_preserves_other_addons(tmp_path, monkeypatch):
+    c = TestClient(create_app(settings=Settings(library_ui=True, cache_root=str(tmp_path))),
+                   base_url="https://testserver", client=("192.168.1.50", 50000))
+    other = {"manifest": {"id": "other.addon"}, "transportUrl": "https://other/manifest.json", "flags": {}}
+    current = [other]
+    writes = []
+    monkeypatch.setattr(lib.stremio_api, "get_user", lambda key, **kw: {"_id": "account-B"})
+    monkeypatch.setattr(lib.stremio_api, "get_addons", lambda key, **kw: list(current))
+    def save(key, addons, **kw):
+        writes.append(addons)
+        current[:] = addons
+        return {"success": True}
+    monkeypatch.setattr(lib.stremio_api, "set_addons", save)
+
+    first = c.post("/library/api/addon/ensure", json={"authKey": "B"})
+    assert first.status_code == 200 and first.json()["changed"] is True
+    assert current[0] == other
+    assert current[1]["manifest"]["id"] == "org.stremiosrv.library"
+    second = c.post("/library/api/addon/ensure", json={"authKey": "B"})
+    assert second.status_code == 200 and second.json()["changed"] is False
+    assert len(writes) == 1
+
+
+def test_account_ensure_replaces_stale_library_url_without_duplicate(tmp_path, monkeypatch):
+    c = TestClient(create_app(settings=Settings(library_ui=True, cache_root=str(tmp_path))),
+                   base_url="https://testserver", client=("192.168.1.50", 50000))
+    old = {"manifest": {"id": "org.stremiosrv.library"},
+           "transportUrl": "https://testserver/library/addon/OLD/manifest.json", "flags": {}}
+    current = [old]
+    monkeypatch.setattr(lib.stremio_api, "get_user", lambda key, **kw: {"_id": "account-A"})
+    monkeypatch.setattr(lib.stremio_api, "get_addons", lambda key, **kw: list(current))
+    monkeypatch.setattr(lib.stremio_api, "set_addons", lambda key, addons, **kw: current.__setitem__(slice(None), addons) or {"success": True})
+    r = c.post("/library/api/addon/ensure", json={"authKey": "A"})
+    assert r.status_code == 200 and r.json()["changed"] is True
+    mine = [a for a in current if a.get("manifest", {}).get("id") == "org.stremiosrv.library"]
+    assert len(mine) == 1
+    assert "/OLD/" not in mine[0]["transportUrl"]
+
+
+def test_account_ensure_owner_config_blocks_other_account_before_reading_addons(tmp_path, monkeypatch):
+    c = TestClient(create_app(settings=Settings(library_ui=True, cache_root=str(tmp_path),
+                                                library_owner="allowed-account")),
+                   base_url="https://testserver", client=("192.168.1.50", 50000))
+    monkeypatch.setattr(lib.stremio_api, "get_user",
+                        lambda key, **kw: {"_id": "other-account", "email": "other@example.com"})
+    def must_not_read(*args, **kwargs):
+        raise AssertionError("blocked account addon collection must not be read")
+    monkeypatch.setattr(lib.stremio_api, "get_addons", must_not_read)
+    r = c.post("/library/api/addon/ensure", json={"authKey": "OTHER"})
+    assert r.status_code == 200
+    assert r.json()["allowed"] is False
+    assert r.json()["changed"] is False
+
+
+def test_account_ensure_owner_config_accepts_matching_email(tmp_path, monkeypatch):
+    c = TestClient(create_app(settings=Settings(library_ui=True, cache_root=str(tmp_path),
+                                                library_owner="owner@example.com")),
+                   base_url="https://testserver", client=("192.168.1.50", 50000))
+    monkeypatch.setattr(lib.stremio_api, "get_user",
+                        lambda key, **kw: {"_id": "owner-id", "email": "owner@example.com"})
+    current = []
+    monkeypatch.setattr(lib.stremio_api, "get_addons", lambda key, **kw: list(current))
+    monkeypatch.setattr(lib.stremio_api, "set_addons",
+                        lambda key, addons, **kw: current.extend(addons) or {"success": True})
+    r = c.post("/library/api/addon/ensure", json={"authKey": "OWNER"})
+    assert r.status_code == 200
+    assert r.json()["allowed"] is True and r.json()["changed"] is True
+    assert current[0]["manifest"]["id"] == "org.stremiosrv.library"

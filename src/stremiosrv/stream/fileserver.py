@@ -56,6 +56,7 @@ def wait_and_read(
     timeout: float = 30.0, first_timeout: float = 120.0,
     chunk: int = 262144, window_bytes: int = 50_331_648, step_ms: int = 50,
     info_hash: str = "", count: bool = True, yield_to_viewer: bool = False,
+    keep_waiting: bool = False,
 ) -> Generator[bytes, None, None]:
     """Yield bytes [start, end] (inclusive, file-relative) of file `idx`, blocking per chunk
     until the covering piece is available.
@@ -80,6 +81,10 @@ def wait_and_read(
     same reason the read cursor is recorded by the caller: this generator must never raise into the
     ASGI layer, and `handle.status().info_hashes.v1` is one more call that could — on a handle the
     evictor has just removed, precisely when the stream is failing and the log matters most.
+
+    `keep_waiting` is reserved for the local FFmpeg/HLS source reader. A transient swarm gap must
+    stall that reader rather than truncate its HTTP body: truncation is EOF to FFmpeg and freezes the
+    EVENT playlist at the last segment. Each expired budget is renewed until the verified piece arrives.
 
     `count` and `yield_to_viewer` are for a second reader of a file someone is already watching:
     the embedded-ASS extractor (api/embedded_ass.py), whose ffmpeg reads the TV's file while the TV
@@ -115,22 +120,26 @@ def wait_and_read(
             had_to_wait = not handle.have_piece(gp)  # piece not ready = playback waits for data
             while not handle.have_piece(gp) and time.time() < deadline:
                 time.sleep(0.2)
-            if not handle.have_piece(gp):
-                # Give up gracefully: end the stream (no raise) so the player just retries. Common on
-                # peer-starved boxes — surfaced via /netcheck. The resulting short body is absorbed
-                # by SuppressClientDisconnect; this warning is the diagnostic that survives.
-                # `served` is the field to read first. 0 means the stall was AT the requested offset
-                # — a cold seek target — so the swarm never delivered the piece the player asked for.
-                # Non-zero means the window ran dry partway through and the budget that expired was
-                # the shorter `timeout`, not `first_timeout`.
-                if count:
-                    metrics.record_timeout()
+            while not handle.have_piece(gp):
+                if not keep_waiting:
+                    # Ordinary clients retain the bounded retry contract. A short body tells them to
+                    # reconnect/seek; only the internal FFmpeg source uses the persistent contract.
+                    if count:
+                        metrics.record_timeout()
+                    logger.warning(
+                        "piece %d/%d not available within %.0fs (peer-starved?); ending stream "
+                        "[%s file %d, byte %d of range %d-%d, %d served]",
+                        gp, total, budget, info_hash or "?", idx, pos, start, end, pos - start,
+                    )
+                    return
                 logger.warning(
-                    "piece %d/%d not available within %.0fs (peer-starved?); ending stream "
+                    "piece %d/%d still unavailable after %.0fs; keeping FFmpeg source open "
                     "[%s file %d, byte %d of range %d-%d, %d served]",
                     gp, total, budget, info_hash or "?", idx, pos, start, end, pos - start,
                 )
-                return
+                deadline = time.time() + budget
+                while not handle.have_piece(gp) and time.time() < deadline:
+                    time.sleep(0.2)
             if had_to_wait and count:
                 metrics.record_stall(time.time() - wait_start)
             # Never read past the end of the current (verified) piece: the next piece may not be

@@ -154,6 +154,24 @@ def test_focus_file_does_not_reset_the_cursor_when_focus_is_unchanged():
     assert h.read_progress() == (int(EP * 0.5), EP)
 
 
+def test_file_contiguous_prefix_stops_before_first_missing_piece():
+    h = Handle(_FakeLT(have=range(12)))
+    assert h.file_contiguous_prefix(0) == 12 * PLEN
+
+
+def test_file_contiguous_prefix_is_full_size_when_complete():
+    h = Handle(_FakeLT(have=range(100)))
+    assert h.file_contiguous_prefix(0) == EP
+
+
+def test_file_contiguous_prefix_respects_unaligned_file_offset():
+    lt_h = _FakeLT(have=range(100, 103), size=EP_UNALIGNED)
+    h = Handle(lt_h)
+    # file 1 begins 1,000,000 bytes into piece 100; pieces 100..102 are present, 103 is the hole.
+    expected = 103 * PLEN - EP_UNALIGNED
+    assert h.file_contiguous_prefix(1) == expected
+
+
 def test_file_complete_true_when_every_piece_present():
     assert Handle(_FakeLT(have=range(100))).file_complete(0) is True
 

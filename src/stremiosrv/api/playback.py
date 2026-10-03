@@ -290,6 +290,10 @@ def serve(info_hash: str, idx: int, request: Request):
                 # Logged only, so a stream that dies names its torrent instead of just a piece
                 # number — which is the difference between "one title is starved" and "the box is".
                 info_hash=info_hash,
+                # FFmpeg (Lavf) feeds our HLS transcoder. Ending this long range at a temporary
+                # torrent gap is interpreted as EOF and leaves the browser looping the last HLS
+                # segments. Keep only that internal source open while verified pieces catch up.
+                keep_waiting=(request.headers.get("User-Agent", "").startswith("Lavf/")),
             )
             try:
                 for chunk in stream:

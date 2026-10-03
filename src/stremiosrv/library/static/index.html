@@ -777,12 +777,13 @@ const LIB = (() => {
   // fileIdx: addons that point at one file inside a pack say so on the stream. Passing it
   // through is what stops a chosen episode from dragging its whole season onto the disk; without
   // it the server falls back to matching the label's season and episode against the file list.
-  async function startDownload(magnet, label, fileIdx) {
+  async function startDownload(magnet, label, fileIdx, candidateSize) {
     $('add-err').textContent = '';
     try {
       await api('/library/api/download', { method: 'POST',
         body: JSON.stringify({ magnet, label: label || null,
-                               fileIdx: Number.isInteger(fileIdx) ? fileIdx : null }) });
+                               fileIdx: Number.isInteger(fileIdx) ? fileIdx : null,
+                               candidateSize: Math.max(0, Number(candidateSize) || 0) }) });
       await loadState();
     } catch (e) {
       const b = e.body || {};
@@ -1189,7 +1190,11 @@ const LIB = (() => {
     if (b.diskFree == null || !b.cacheSize) return 'ok';   // nothing to judge against
     // A floor for a small disk, a fraction for a large one: 2% of a 2 TB disk is worth holding
     // back, and 2% of a 16 GB one is not.
-    const reserve = Math.max(2 * 1024 ** 3, Math.ceil((b.diskTotal || 0) * 0.02));
+    // The server owns the policy. Older servers do not expose hostReserve, so retain
+    // the 1.6.23 2 GiB/2% calculation only as a compatibility fallback.
+    const reserve = b.hostReserve != null
+      ? Number(b.hostReserve)
+      : Math.max(2 * 1024 ** 3, Math.ceil((b.diskTotal || 0) * 0.02));
     // Downloads already running have claimed space they have not written yet. It is in neither
     // `df` nor the cache total, so judging a new download on those alone approves things there
     // will be no room for once everything in flight has finished -- which is exactly when the
@@ -1356,7 +1361,7 @@ const LIB = (() => {
         await startDownload(magnetFor(st), Object.assign({
           metaId: detailCtx.id, type: detailCtx.type,
           name: detailCtx.name, poster: detailCtx.poster,
-        }, (extra && extra.label) || {}), st && st.fileIdx);
+        }, (extra && extra.label) || {}), st && st.fileIdx, releaseSize(st));
         btn.textContent = 'Queued';
       };
     });
@@ -1426,7 +1431,7 @@ const LIB = (() => {
       $('add-err').textContent = '';
       if (!m.startsWith('magnet:')) { $('add-err').textContent = 'Not a magnet link.'; return; }
       $('magnet').value = '';
-      startDownload(m, null);
+      startDownload(m, null, null, 0);
     };
     $('addonCopy').onclick = () => {
       navigator.clipboard.writeText($('addonUrl').textContent);

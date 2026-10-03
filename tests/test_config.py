@@ -130,3 +130,17 @@ def test_server_url_is_the_containers_own_unprefixed_setting(monkeypatch):
     monkeypatch.setenv("SERVER_URL", "https://stremio.example.com:12470/")
     assert Settings().server_url == "https://stremio.example.com:12470/"
     assert Settings(server_url="https://other.example.com/").server_url == "https://other.example.com/"
+
+
+def test_host_disk_reserve_defaults():
+    s = Settings()
+    assert s.host_min_free_gb == 10.0
+    assert s.host_min_free_percent == 10.0
+
+
+def test_host_disk_reserve_env(monkeypatch):
+    monkeypatch.setenv("STREMIOSRV_HOST_MIN_FREE_GB", "12.5")
+    monkeypatch.setenv("STREMIOSRV_HOST_MIN_FREE_PERCENT", "7.5")
+    s = Settings()
+    assert s.host_min_free_gb == 12.5
+    assert s.host_min_free_percent == 7.5

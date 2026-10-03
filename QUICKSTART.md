@@ -16,9 +16,9 @@ The current server release is tracked by `SERVER_VERSION` / `FORK_VERSION`, WebA
 Current platform release:
 
 ```text
-Upstream Core   1.6.22
-Fork/Platform   3.0.7
-WebAdmin        3.0.7
+Upstream Core   1.6.23
+Fork/Platform   3.0.8
+WebAdmin        3.0.8
 VPN Gateway     3.0.6
 ```
 
@@ -60,8 +60,8 @@ pihole/pihole:latest
 You can pin the coordinated release in `.env`:
 
 ```env
-STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.7
-WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.7
+STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.8
+WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.8
 VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.6
 ```
 

@@ -207,6 +207,8 @@ def build_hls_cmd(
             if color_space:
                 argv += ["-colorspace", color_space]
 
+    if decision.get("_realtimeInput"):
+        argv += ["-re"]
     argv += ["-i", media_url, "-map", "0:v:0"]
     if multitrack:
         for track in audio_tracks:

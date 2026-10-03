@@ -88,3 +88,28 @@ def test_a_hanging_ffprobe_becomes_a_named_error(monkeypatch):
         probe_mod.probe_media("http://host/somehash/3")
     # The message reaches the log, and the URL names what someone is watching.
     assert "somehash" not in str(exc.value)
+
+
+def test_map_probe_preserves_embedded_subtitle_metadata():
+    raw = {
+        "format": {"format_name": "matroska", "duration": "100.0"},
+        "streams": [{
+            "index": 12,
+            "codec_type": "subtitle",
+            "codec_name": "ass",
+            "tags": {"language": "eng", "title": "SDH Full"},
+            "disposition": {"default": 1, "forced": 0, "hearing_impaired": 1},
+        }],
+    }
+    stream = map_probe(raw)["streams"][0]
+    assert stream == {
+        "id": 12,
+        "index": 12,
+        "track": "subtitle",
+        "codec": "ass",
+        "lang": "eng",
+        "title": "SDH Full",
+        "default": True,
+        "forced": False,
+        "hearingImpaired": True,
+    }

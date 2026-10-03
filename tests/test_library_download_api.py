@@ -363,3 +363,119 @@ def test_pin_requires_a_session(tmp_path, monkeypatch):
     s = Settings(library_ui=True, cache_root=str(tmp_path))
     c = TestClient(create_app(settings=s, engine=FakeEngine()), base_url="https://testserver")
     assert c.post("/library/api/pin", json={"infoHash": IH}, headers=HTTPS).status_code == 401
+
+
+def test_download_rejects_before_engine_add_when_host_reserve_would_be_entered(
+    tmp_path, monkeypatch
+):
+    eng = FakeEngine()
+    c = _signed_in(tmp_path, monkeypatch, eng)
+
+    monkeypatch.setattr(
+        lib.statemod,
+        "build",
+        lambda *a, **k: {
+            "entries": [],
+            "budget": {
+                "diskFree": 20 * 1024**3,
+                "diskTotal": 80 * 1024**3,
+                "cacheUsed": 0,
+                "cacheSize": 18 * 1024**3,
+                "committed": 5 * 1024**3,
+            },
+        },
+    )
+
+    r = c.post(
+        "/library/api/download",
+        json={"magnet": MAGNET, "candidateSize": 6 * 1024**3},
+        headers=HTTPS,
+    )
+
+    assert r.status_code == 409
+    body = r.json()
+    assert body["error"] == "insufficient_space"
+    assert "detail" not in body
+    assert body["needed"] == 6 * 1024**3
+    assert body["free"] == 20 * 1024**3
+    assert body["committed"] == 5 * 1024**3
+    assert body["reserve"] == 10 * 1024**3
+    assert body["available"] == 5 * 1024**3
+    # Admission must fail before the torrent reaches libtorrent.
+    assert eng.added == []
+    assert eng.wanted == []
+
+
+def test_download_accepts_when_candidate_preserves_host_reserve(
+    tmp_path, monkeypatch
+):
+    eng = FakeEngine()
+    c = _signed_in(tmp_path, monkeypatch, eng)
+
+    monkeypatch.setattr(
+        lib.statemod,
+        "build",
+        lambda *a, **k: {
+            "entries": [],
+            "budget": {
+                "diskFree": 30 * 1024**3,
+                "diskTotal": 80 * 1024**3,
+                "cacheUsed": 0,
+                "cacheSize": 18 * 1024**3,
+                "committed": 5 * 1024**3,
+            },
+        },
+    )
+
+    r = c.post(
+        "/library/api/download",
+        json={"magnet": MAGNET, "candidateSize": 15 * 1024**3},
+        headers=HTTPS,
+    )
+
+    assert r.status_code == 200
+    assert eng.added == [MAGNET]
+    assert eng.wanted == [None]
+
+
+def test_unknown_download_size_is_rejected_if_committed_space_reaches_reserve(
+    tmp_path, monkeypatch
+):
+    eng = FakeEngine()
+    c = _signed_in(tmp_path, monkeypatch, eng)
+
+    monkeypatch.setattr(
+        lib.statemod,
+        "build",
+        lambda *a, **k: {
+            "entries": [],
+            "budget": {
+                "diskFree": 14 * 1024**3,
+                "diskTotal": 80 * 1024**3,
+                "cacheUsed": 0,
+                "cacheSize": 18 * 1024**3,
+                "committed": 5 * 1024**3,
+            },
+        },
+    )
+
+    r = c.post(
+        "/library/api/download",
+        json={"magnet": MAGNET},
+        headers=HTTPS,
+    )
+
+    assert r.status_code == 409
+    assert eng.added == []
+
+
+def test_candidate_size_cannot_be_negative(ctx):
+    c, eng, _ = ctx
+    r = c.post(
+        "/library/api/download",
+        json={"magnet": MAGNET, "candidateSize": -1},
+        headers=HTTPS,
+    )
+    # Negative client input is treated as unknown/zero rather than creating space.
+    assert r.status_code == 200
+    assert eng.added == [MAGNET]

@@ -29,6 +29,12 @@ def cache_list(request: Request) -> list[dict]:
     idle = cachemod.load_name_index(s.cache_root)
     out = []
     for item in cachemod.scan_cache(s.cache_root):
+        # scan_cache intentionally includes libtorrent .<infohash>.parts because those bytes must
+        # count against the cache budget and remain eligible for coordinated eviction. They are
+        # implementation artefacts, however, not playable cache entries: never expose hidden
+        # top-level housekeeping files as films/streams in /cache.json or WebAdmin.
+        if item["name"].startswith("."):
+            continue
         ih = live.get(item["name"]) or idle.get(item["name"])
         out.append({
             "name": item["name"],

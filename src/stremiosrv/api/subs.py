@@ -7,8 +7,10 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import zlib
+from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
@@ -27,6 +29,49 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Completed HLS WebVTT windows are small. Keep a bounded in-process LRU and one lock per
+# window so browser retries/concurrent playlist requests never launch duplicate ffmpeg jobs.
+_VTT_WINDOW_CACHE_MAX = 256
+_VTT_WINDOW_TIMEOUT = 25.0
+_vtt_window_guard = threading.Lock()
+_vtt_window_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_vtt_window_locks: dict[tuple, threading.Lock] = {}
+
+
+def _vtt_window_lock(key: tuple) -> threading.Lock:
+    with _vtt_window_guard:
+        return _vtt_window_locks.setdefault(key, threading.Lock())
+
+
+def _vtt_cache_get(key: tuple) -> bytes | None:
+    with _vtt_window_guard:
+        payload = _vtt_window_cache.get(key)
+        if payload is not None:
+            _vtt_window_cache.move_to_end(key)
+        return payload
+
+
+def _vtt_cache_put(key: tuple, payload: bytes) -> None:
+    if not payload:
+        return
+    with _vtt_window_guard:
+        _vtt_window_cache[key] = payload
+        _vtt_window_cache.move_to_end(key)
+        while len(_vtt_window_cache) > _VTT_WINDOW_CACHE_MAX:
+            old_key, _ = _vtt_window_cache.popitem(last=False)
+            # Keep the lock table bounded with the payload LRU, but never replace a lock that a
+            # concurrent request is currently holding (that would defeat in-flight deduplication).
+            old_lock = _vtt_window_locks.get(old_key)
+            if old_lock is not None and not old_lock.locked():
+                _vtt_window_locks.pop(old_key, None)
+
+
+def _reset_vtt_window_cache() -> None:
+    """Test helper; production cache is naturally reset with the server process."""
+    with _vtt_window_guard:
+        _vtt_window_cache.clear()
+        _vtt_window_locks.clear()
 
 
 def _decompress(raw: bytes, content_encoding: str) -> bytes:
@@ -345,34 +390,43 @@ def _trace_webvtt_timeline(payload: bytes, start: float | None, duration: float 
     )
 
 
-def _add_webvtt_timestamp_map(payload: bytes, start: float | None) -> bytes:
-    """Map a window-local WebVTT timeline onto the MPEG-TS playback clock used by HLS.
-
-    FFmpeg rebases output-side subtitle seeks to zero.  HLS WebVTT carries that local cue
-    timeline correctly when X-TIMESTAMP-MAP maps LOCAL 00:00:00.000 to the window start.
-    """
+def _add_webvtt_timestamp_map(payload: bytes, start: float | None, mpegts_start: int = 0) -> bytes:
+    """Declare the HLS WebVTT clock for cues preserved on the media's absolute timeline."""
     if start is None or not payload.startswith(b"WEBVTT"):
         return payload
-    mpegts = int(round(max(0.0, start) * 90000))
-    mapping = f"X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{mpegts}\n".encode("ascii")
+    # Window extraction uses -copyts, so FFmpeg's WebVTT cues remain on the media's absolute
+    # timeline. Map LOCAL zero to MPEGTS zero; adding `start` here would shift every cue twice.
+    mapping = f"X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{max(0, int(mpegts_start))}\n".encode("ascii")
     head, sep, tail = payload.partition(b"\n")
     if not sep:
         return payload
     return head + sep + mapping + tail
 
 
-def _webvtt_window_stream(proc: subprocess.Popen, start: float | None, duration: float | None):
-    """Buffer a finite WebVTT window so its timing can be diagnosed without logging cue text."""
+def _read_webvtt_window(proc: subprocess.Popen, start: float | None, duration: float | None, mpegts_start: int = 0) -> bytes:
+    """Collect one finite WebVTT window. Failed/empty output is deliberately not cacheable."""
     try:
         assert proc.stdout is not None
-        payload = proc.stdout.read()
-        rc = proc.wait()
+        try:
+            if hasattr(proc, "communicate"):
+                payload, _ = proc.communicate(timeout=_VTT_WINDOW_TIMEOUT)
+            else:  # lightweight unit-test process doubles
+                payload = proc.stdout.read()
+                proc.wait(timeout=_VTT_WINDOW_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            logger.warning("embedded subtitle ffmpeg exceeded %.0fs window timeout", _VTT_WINDOW_TIMEOUT)
+            proc.kill()
+            payload, _ = proc.communicate()
+            return b""
+        rc = getattr(proc, "returncode", None)
+        if rc is None:
+            rc = proc.poll()
         _trace_webvtt_timeline(payload, start, duration)
-        payload = _add_webvtt_timestamp_map(payload, start)
+        payload = _add_webvtt_timestamp_map(payload, start, mpegts_start)
         if rc:
             logger.warning("embedded subtitle ffmpeg exited with code %s", rc)
-        if payload:
-            yield payload
+            return b""
+        return payload
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -383,6 +437,19 @@ def _webvtt_window_stream(proc: subprocess.Popen, start: float | None, duration:
                 proc.wait()
 
 
+def _cached_webvtt_window_stream(key: tuple, proc_factory, start: float | None, duration: float | None, mpegts_start: int = 0):
+    """Deduplicate concurrent/retried HLS requests and reuse only completed VTT windows."""
+    payload = _vtt_cache_get(key)
+    if payload is None:
+        with _vtt_window_lock(key):
+            payload = _vtt_cache_get(key)
+            if payload is None:
+                payload = _read_webvtt_window(proc_factory(), start, duration, mpegts_start)
+                _vtt_cache_put(key, payload)
+    if payload:
+        yield payload
+
+
 @router.get("/{info_hash}/-1/subtitles.vtt")
 def subtitles_vtt_guessed(
     info_hash: str,
@@ -391,6 +458,7 @@ def subtitles_vtt_guessed(
     track: int = 0,
     start: float | None = None,
     duration: float | None = None,
+    mpegtsStart: int = 0,
 ) -> StreamingResponse:
     """Serve WebVTT when stremio-core uses -1 for an implicit file index.
 
@@ -406,6 +474,7 @@ def subtitles_vtt_guessed(
         track=track,
         start=start,
         duration=duration,
+        mpegtsStart=mpegtsStart,
     )
 
 
@@ -418,8 +487,36 @@ def subtitles_vtt(
     track: int = 0,
     start: float | None = None,
     duration: float | None = None,
+    mpegtsStart: int = 0,
 ) -> StreamingResponse:
     media = resolve_media_input(request, mediaURL)
+
+    # For our own active torrent, subtitle extraction uses the private auxiliary reader.
+    # That reader yields piece deadlines to the viewer and does not count its waits as
+    # playback stalls. Non-torrent inputs keep the normal guarded resolved URL.
+    parsed = parse_stream_url(mediaURL)
+    prefix_limit = None
+    resolved_idx = idx
+    if parsed is not None:
+        try:
+            from stremiosrv.api import embedded_ass
+            resolved_idx = parsed[1]
+            h = request.app.state.engine.get(parsed[0])
+            if resolved_idx == -1 and h is not None and h.has_metadata():
+                from stremiosrv.api.playback import _guess
+                resolved_idx = _guess(h, {})
+            if embedded_ass._playing(request, parsed[0], resolved_idx) is not None:
+                prefix_limit = h.file_contiguous_prefix(resolved_idx)
+                if prefix_limit > 0:
+                    # Present the already-downloaded contiguous prefix as a finite virtual file.
+                    # FFmpeg therefore sees EOF at the first torrent hole instead of blocking there.
+                    media = embedded_ass.reader_url(
+                        request, parsed[0], resolved_idx, limit=prefix_limit
+                    )
+                else:
+                    media = embedded_ass.reader_url(request, parsed[0], resolved_idx)
+        except Exception:
+            logger.debug("subtitle finite-prefix reader unavailable", exc_info=True)
 
     # `track` is the global FFmpeg stream index returned by
     # /subtitles.json, not the subtitle-relative 0:s:<n> index.
@@ -439,14 +536,20 @@ def subtitles_vtt(
         "-protocol_whitelist",
         "file,crypto,data,http,tcp,tls,https",
     ]
-    # Subtitle streams are sparse. Input-side seeking can skip the packets needed by a
-    # requested window; real torrent playback then returns only the WEBVTT header. Decode
-    # from the input timeline first and apply the finite subtitle window on the output side.
-    argv += ["-i", media]
+    # Keep windowed subtitle timestamps on the media's absolute clock. This follows the
+    # proven embedded-ASS extractor: seek on input with a small lead, preserve timestamps,
+    # and stop at the absolute end of the requested window. Unlike output-side -t, -to with
+    # -copyts also terminates correctly when subtitle packets are sparse.
+    preroll = min(5.0, max(0.0, start or 0.0)) if start is not None else 0.0
+    windowed = start is not None or duration is not None
+    if windowed:
+        argv += ["-copyts"]
     if start is not None:
-        argv += ["-ss", f"{max(0.0, start):.3f}"]
+        argv += ["-ss", f"{max(0.0, start - preroll):.3f}"]
+    argv += ["-i", media]
     if duration is not None:
-        argv += ["-t", f"{max(0.001, duration):.3f}"]
+        window_start = max(0.0, start or 0.0)
+        argv += ["-to", f"{window_start + max(0.001, duration):.3f}"]
     argv += [
         "-map", f"0:{track}",
         "-c:s", "webvtt",
@@ -454,24 +557,27 @@ def subtitles_vtt(
         "pipe:1",
     ]
 
-    try:
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=0,
-        )
-    except OSError as e:
-        raise HTTPException(
-            status_code=503,
-            detail="subtitle extractor unavailable",
-        ) from e
+    def _start_proc():
+        try:
+            return subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except OSError as e:
+            raise HTTPException(
+                status_code=503,
+                detail="subtitle extractor unavailable",
+            ) from e
 
-    stream = (
-        _webvtt_window_stream(proc, start, duration)
-        if start is not None or duration is not None
-        else _webvtt_stream(proc)
-    )
+    if windowed:
+        # The finite prefix is an extraction boundary, not subtitle identity. Once a window has
+        # completed successfully, growth of the torrent prefix must not invalidate/re-run it.
+        cache_key = (info_hash, resolved_idx, track, start, duration, mpegtsStart)
+        stream = _cached_webvtt_window_stream(cache_key, _start_proc, start, duration, mpegtsStart)
+    else:
+        stream = _webvtt_stream(_start_proc())
     return StreamingResponse(
         stream,
         media_type="text/vtt; charset=utf-8",

@@ -1,4 +1,4 @@
-# Stremio Server WebAdmin 3.0.7
+# Stremio Server WebAdmin 3.0.8
 
 
 Self-hosted Stremio streaming platform with Stremio/libtorrent server, WebAdmin, Pi-hole, optional Gluetun/OpenVPN routing and hardware transcoding support.
@@ -7,10 +7,35 @@ Current versions:
 
 | Component | Version |
 | --- | --- |
-| Fork / Platform | 3.0.7 |
-| WebAdmin | 3.0.7 |
+| Fork / Platform | 3.0.8 |
+| WebAdmin | 3.0.8 |
 | VPN Gateway image | `3.0.6` coordinated release tag |
-| Upstream Server/Core | 1.6.22 |
+| Upstream Server/Core | 1.6.23 |
+
+## 3.0.8 — Web Player persistence and host disk protection
+
+Version 3.0.8 integrates the Server/Core 1.6.23 Web Player loader correction
+while preserving the fork-owned WebAdmin, VPN, Library and transcoding
+architecture.
+
+A streaming-server URL selected manually in the Web Player is now preserved
+instead of being periodically overwritten by the deployment seed URL.
+
+Ordinary Library downloads now also enforce a host filesystem reserve before
+adding a torrent. The default reserve is the greater of 10 GiB or 10% of the
+filesystem, while retaining the lower upstream operational safety floor.
+Committed download bytes and the requested candidate size are included in the
+admission decision. The existing stricter Keep/Pin policy remains independent
+and unchanged.
+
+The new deployment settings are:
+
+- `STREMIOSRV_HOST_MIN_FREE_GB=10`
+- `STREMIOSRV_HOST_MIN_FREE_PERCENT=10`
+
+The VPN Gateway remains unchanged at the previously validated 3.0.6 image.
+
+See `docs/releases/v3.0.8.md` for validation and upgrade details.
 
 ## 3.0.7 — Web Player playback corrections
 
@@ -288,7 +313,7 @@ Review these parameters before first start:
 | STREMIO_DIRECT_DNS_UPSTREAM | Change only if another resolver is required in DIRECT mode. |
 | STREMIO_IMAGE / WEBADMIN_IMAGE / VPN_IMAGE | `latest` is convenient for development. For production, pin the published release tags. The VPN image used during final 3.0.0 runtime validation was `:latest`; do not assume a versioned VPN tag exists until the release workflow has published it. |
 | SERVER_URL | Optional. Set when an explicit trusted Stremio HTTPS endpoint is required. |
-| STREMIOSRV_LIBRARY_OWNER | Optional. Use only when ownership restriction is intentionally required. |
+| STREMIOSRV_LIBRARY_OWNER | Optional Stremio account `_id` or email. When empty, My Library is auto-installed for each account authenticated in the bundled Web Player; when set, auto-install is restricted to this account only. |
 | STREMIOSRV_LIBRARY_ADDON_ALLOW | Leave empty for the built-in private-network allowlist unless a deliberate custom allowlist is required. |
 | GPU_BACKEND | Keep auto for normal installations. |
 | VAAPI_DEVICE | Leave empty unless a specific local render node has been validated. |

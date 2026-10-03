@@ -295,10 +295,13 @@ def test_subtitles_vtt_window_passes_seek_and_duration_to_ffmpeg(monkeypatch):
     )
     assert r.status_code == 200
     argv = seen["argv"]
-    assert ["-ss", "60.000"] == argv[argv.index("-ss"):argv.index("-ss") + 2]
-    assert ["-t", "30.000"] == argv[argv.index("-t"):argv.index("-t") + 2]
-    assert "-copyts" not in argv
-    assert argv.index("-i") < argv.index("-ss") < argv.index("-t")
+    ss_positions = [i for i, value in enumerate(argv) if value == "-ss"]
+    assert len(ss_positions) == 1
+    assert argv[ss_positions[0]:ss_positions[0] + 2] == ["-ss", "55.000"]
+    assert ["-to", "90.000"] == argv[argv.index("-to"):argv.index("-to") + 2]
+    assert "-t" not in argv
+    assert "-copyts" in argv
+    assert argv.index("-copyts") < ss_positions[0] < argv.index("-i") < argv.index("-to")
 
 
 def test_subtitles_vtt_invalid_global_track_returns_controlled_404(monkeypatch):
@@ -530,9 +533,18 @@ def test_windowed_webvtt_adds_hls_timestamp_map():
     out = subs_api._add_webvtt_timestamp_map(payload, 60.0)
 
     assert out.startswith(
-        b"WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:5400000\n"
+        b"WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0\n"
     )
     assert b"00:00:02.000 --> 00:00:04.000" in out
+
+
+def test_windowed_webvtt_uses_dynamic_mpegts_start():
+    from stremiosrv.api import subs as subs_api
+
+    payload = b"WEBVTT\n\n00:00:02.000 --> 00:00:04.000\ntext\n"
+    out = subs_api._add_webvtt_timestamp_map(payload, 60.0, 129750)
+
+    assert b"X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:129750\n" in out
 
 
 def test_non_windowed_webvtt_is_not_timestamp_mapped():
@@ -557,6 +569,7 @@ def test_subtitles_vtt_minus_one_route_delegates_to_webvtt_handler(monkeypatch):
         track=0,
         start=None,
         duration=None,
+        mpegtsStart=0,
     ):
         captured.update(
             {
@@ -566,6 +579,7 @@ def test_subtitles_vtt_minus_one_route_delegates_to_webvtt_handler(monkeypatch):
                 "track": track,
                 "start": start,
                 "duration": duration,
+                "mpegtsStart": mpegtsStart,
             }
         )
         return subs_api.Response(
@@ -600,6 +614,7 @@ def test_subtitles_vtt_minus_one_route_delegates_to_webvtt_handler(monkeypatch):
         "track": 2,
         "start": 30.0,
         "duration": 30.0,
+        "mpegtsStart": 0,
     }
 
 
@@ -620,3 +635,84 @@ def test_subtitles_vtt_minus_one_route_is_registered():
 
     assert "/{info_hash}/-1/subtitles.vtt" in paths
     assert "/{info_hash}/{idx:int}/subtitles.vtt" in paths
+
+
+def test_webvtt_window_cache_reuses_completed_payload(monkeypatch):
+    import io
+    from stremiosrv.api import subs as subs_api
+
+    subs_api._reset_vtt_window_cache()
+    calls = 0
+
+    class _Proc:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n")
+            self._returncode = None
+        def wait(self, timeout=None):
+            self._returncode = 0
+            return 0
+        def poll(self):
+            return self._returncode
+        def terminate(self):
+            self._returncode = 0
+        def kill(self):
+            self._returncode = -9
+
+    def factory():
+        nonlocal calls
+        calls += 1
+        return _Proc()
+
+    key = ("a" * 40, 0, 9, 0.0, 30.0)
+    first = b"".join(subs_api._cached_webvtt_window_stream(key, factory, 0.0, 30.0))
+    second = b"".join(subs_api._cached_webvtt_window_stream(key, factory, 0.0, 30.0))
+    assert first == second
+    assert first.startswith(b"WEBVTT")
+    assert calls == 1
+
+
+def test_webvtt_window_cache_deduplicates_concurrent_requests():
+    import io
+    import threading
+    import time
+    from stremiosrv.api import subs as subs_api
+
+    subs_api._reset_vtt_window_cache()
+    calls = 0
+    calls_lock = threading.Lock()
+    results = []
+
+    class _Proc:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n")
+            self._returncode = None
+        def wait(self, timeout=None):
+            time.sleep(0.05)
+            self._returncode = 0
+            return 0
+        def poll(self):
+            return self._returncode
+        def terminate(self):
+            self._returncode = 0
+        def kill(self):
+            self._returncode = -9
+
+    def factory():
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        return _Proc()
+
+    key = ("b" * 40, 0, 9, 30.0, 30.0)
+    def worker():
+        results.append(b"".join(subs_api._cached_webvtt_window_stream(key, factory, 30.0, 30.0)))
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert len(results) == 2
+    assert results[0] == results[1]
+    assert calls == 1
