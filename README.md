@@ -1,4 +1,4 @@
-# Stremio Server WebAdmin 3.0.8
+# Stremio Server WebAdmin 3.0.9
 
 
 Self-hosted Stremio streaming platform with Stremio/libtorrent server, WebAdmin, Pi-hole, optional Gluetun/OpenVPN routing and hardware transcoding support.
@@ -7,10 +7,22 @@ Current versions:
 
 | Component | Version |
 | --- | --- |
-| Fork / Platform | 3.0.8 |
-| WebAdmin | 3.0.8 |
+| Fork / Platform | 3.0.9 |
+| WebAdmin | 3.0.9 |
 | VPN Gateway image | `3.0.6` coordinated release tag |
 | Upstream Server/Core | 1.6.23 |
+
+## 3.0.9 — HEVC Main10 full VAAPI and faster embedded-subtitle readiness
+
+Version 3.0.9 keeps HEVC Main10 decode on the validated Intel/iHD VAAPI path instead of
+forcing software decode. When the Web Player requires H.264, HEVC Main10 can therefore remain
+on the GPU for decode, HDR-to-SDR tone mapping and H.264 VAAPI encode.
+
+Torrent media probing now actively prioritises the file head it is waiting for. This removes a
+passive wait that could report `media source head unavailable` even while the torrent was
+downloading, and makes embedded subtitle discovery available earlier on incomplete torrents.
+
+No new environment variables or persistent-state migrations are required.
 
 ## 3.0.8 — Web Player persistence and host disk protection
 

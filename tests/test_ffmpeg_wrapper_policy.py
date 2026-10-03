@@ -111,7 +111,7 @@ def test_legacy_copy_mode_without_explicit_profile_is_passthrough():
 
 
 
-def test_full_vaapi_falls_back_to_software_decode_for_hevc_main10(monkeypatch):
+def test_full_vaapi_uses_hardware_decode_for_hevc_main10(monkeypatch):
     args = [
         "-hide_banner", "-i", "https://example.invalid/video",
         "-map", "0:v:0", "-c:v", "copy", "-c:a", "aac",
@@ -137,14 +137,14 @@ def test_full_vaapi_falls_back_to_software_decode_for_hevc_main10(monkeypatch):
     )
 
     assert transformed[transformed.index("-c:v") + 1] == "h264_vaapi"
-    assert "-hwaccel" not in transformed
-    assert transformed[transformed.index("-vaapi_device") + 1] == "/dev/dri/renderD128"
-    assert "format=nv12,hwupload" in transformed[transformed.index("-vf") + 1]
-    assert "profile=vaapi-h264" in decision
-    assert "profile=vaapi-full-h264" not in decision
-    assert "decode=software" in decision
-    assert "decode fallback=software" in decision
-    assert "pix_fmt=yuv420p10le" in decision
+    assert transformed[transformed.index("-hwaccel") + 1] == "vaapi"
+    assert transformed[transformed.index("-hwaccel_output_format") + 1] == "vaapi"
+    assert transformed[transformed.index("-hwaccel_device") + 1] == "/dev/dri/renderD128"
+    assert "scale_vaapi" in transformed[transformed.index("-vf") + 1]
+    assert "hwupload" not in transformed[transformed.index("-vf") + 1]
+    assert "profile=vaapi-full-h264" in decision
+    assert "decode=vaapi" in decision
+    assert "decode fallback=software" not in decision
 
 
 
@@ -160,7 +160,7 @@ def test_auto_preserves_h264_copy_when_direct(monkeypatch):
     assert "direct=yes" in decision
 
 
-def test_auto_converts_hevc_main10_copy_to_h264_vaapi(monkeypatch):
+def test_auto_converts_hevc_main10_copy_to_full_vaapi_h264(monkeypatch):
     args = [
         "-hide_banner", "-i", "https://example.invalid/video",
         "-map", "0:v:0", "-c:v", "copy", "-c:a", "aac",
@@ -193,13 +193,15 @@ def test_auto_converts_hevc_main10_copy_to_h264_vaapi(monkeypatch):
     )
 
     assert transformed[transformed.index("-c:v") + 1] == "h264_vaapi"
-    assert transformed[transformed.index("-vaapi_device") + 1] == "/dev/dri/renderD128"
-    assert "-hwaccel" not in transformed
-    assert "format=nv12,hwupload" in transformed[transformed.index("-vf") + 1]
+    assert transformed[transformed.index("-hwaccel") + 1] == "vaapi"
+    assert transformed[transformed.index("-hwaccel_output_format") + 1] == "vaapi"
+    assert transformed[transformed.index("-hwaccel_device") + 1] == "/dev/dri/renderD128"
+    assert "scale_vaapi" in transformed[transformed.index("-vf") + 1]
+    assert "hwupload" not in transformed[transformed.index("-vf") + 1]
     assert "video=copy(hevc)->h264_vaapi" in decision
-    assert "profile=vaapi-h264" in decision
-    assert "profile=vaapi-full-h264" not in decision
-    assert "decode fallback=software" in decision
+    assert "profile=vaapi-full-h264" in decision
+    assert "decode=vaapi" in decision
+    assert "decode fallback=software" not in decision
 
 
 def test_auto_uses_cpu_h264_when_vaapi_is_unavailable(monkeypatch):

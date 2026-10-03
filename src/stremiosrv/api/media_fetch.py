@@ -213,24 +213,29 @@ def _torrent_head(request: Request, ih: str, idx: int, n: int = 64) -> bytes | N
             idx = playback._guess(h, {})
         if idx < 0:
             return b""  # no media file in the torrent: nothing ffprobe could open
-        first = h.file_offset(idx) // h.piece_length()
+        h.file_offset(idx)  # validate the selected file before entering the bounded reader
     except Exception:  # noqa: BLE001 — cannot resolve the file at all: ffprobe would fail too, pass
         return b""
-    give_up = time.monotonic() + request.app.state.settings.stream_first_piece_timeout
-    while True:
-        try:
-            present = h.have_piece(first)
-        except Exception:  # noqa: BLE001 — torrent removed mid-wait: ffprobe would fail on it too
-            return b""
-        if present:
-            break
-        if time.monotonic() > give_up:
-            return None  # head never arrived within the stream's read window -> refuse
-        time.sleep(0.2)
+    # Use the normal stream reader for the sniff itself. Besides waiting, wait_and_read
+    # actively boosts the covering piece to priority 7 with an immediate deadline. The old
+    # pre-wait only polled have_piece(), so an HLS/subtitle probe could spend its entire timeout
+    # waiting for a head that nobody had actually prioritised yet.
     try:
-        return b"".join(wait_and_read(eng.save_path(), h, idx, 0, n - 1, count=False))
-    except Exception:  # noqa: BLE001 — the piece is present but the read failed: REFUSE, don't let
-        return None    # ffprobe read the same on-disk (possibly manifest) bytes we could not sniff
+        head = b"".join(wait_and_read(
+            eng.save_path(), h, idx, 0, n - 1,
+            first_timeout=request.app.state.settings.stream_first_piece_timeout,
+            count=False,
+        ))
+    except Exception:  # noqa: BLE001 — a removed/invalid handle is not safe to probe
+        return None
+    if head:
+        return head
+    # A non-empty media file whose head yielded no bytes stayed unavailable (or vanished) during
+    # the bounded reader window. Refuse rather than letting ffprobe get a second, later chance.
+    try:
+        return b"" if h.file_size(idx) == 0 else None
+    except Exception:  # noqa: BLE001 — removed handle: ffprobe must not race it
+        return None
 
 
 def _refuse_own_manifest(request: Request, media_url: str) -> None:
