@@ -34,7 +34,7 @@ from stremiosrv.library import labels as labelsmod
 from stremiosrv.library import session as sessionmod
 from stremiosrv.library import state as statemod
 from stremiosrv.library.ratelimit import RateLimiter
-from stremiosrv.torrent.engine import PinSpaceError
+from stremiosrv.torrent.engine import PinSizeUnknownError, PinSpaceError
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/library")
@@ -490,6 +490,8 @@ def pin(body: RemoveBody, request: Request) -> dict:
             status_code=409,
             detail={"error": "insufficient_space", "needed": e.needed, "free": e.free},
         ) from None
+    except PinSizeUnknownError:
+        raise HTTPException(status_code=409, detail={"error": "size_unknown"}) from None
     return {"ok": True}
 
 
