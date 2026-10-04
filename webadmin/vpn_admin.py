@@ -577,9 +577,6 @@ def reconnect_vpn():
             stopped, stop_detail = _wait_for_vpn_stopped(timeout=15)
             if not stopped:
                 _audit("vpn.reconnect.stop_wait", f"status={stop_detail}")
-            # Gluetun can report stopped before OpenVPN has finished removing its routes.
-            # A short quiescence window prevents an immediate restart from racing that cleanup.
-            time.sleep(3)
             _control("PUT", "/v1/vpn/status", {"status": "running"}, timeout=10)
         except Exception:
             # The supervisor may still be starting Gluetun; keep the persistent
