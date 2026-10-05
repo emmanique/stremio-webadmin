@@ -77,8 +77,10 @@ def patch_hls_resume_timeline(text: str) -> tuple[str, int]:
 
     load_old = 'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream})})'
     load_new = (
-        '__stremioHlsResumeOffset="number"==typeof i.time&&isFinite(i.time)&&i.time>0?Math.round(i.time):0,'
-        'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream,time:0})})'
+        '__stremioHlsResumeOffset=t.stream&&"string"==typeof t.stream.url&&'
+        '-1!==t.stream.url.indexOf("/hlsv2/")&&"number"==typeof i.time&&isFinite(i.time)&&i.time>0?Math.round(i.time):0,'
+        'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream,'
+        'time:__stremioHlsResumeOffset>0?0:i.time})})'
     )
     if text.count(load_old) != 1:
         return text, 0

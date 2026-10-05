@@ -126,8 +126,24 @@ def test_hls_resume_timeline_maps_local_media_time_to_core_time():
     assert '__stremioHlsResumeOffset' in patched
     assert '"time"===t' in patched
     assert '"duration"===t' in patched
-    assert 'stream:t.stream,time:0' in patched
+    assert 't.stream.url.indexOf("/hlsv2/")' in patched
+    assert 'time:__stremioHlsResumeOffset>0?0:i.time' in patched
     assert '__stremioHlsResumeOffset=0,D("stream")' in patched
+
+
+def test_hls_resume_timeline_preserves_direct_stream_resume_time():
+    source = (
+        'var A=this,u=null,O=!1,d=[],N=null,R=new i,c=!1,m={stream:!1,videoParams:!1};'
+        'function L(e,t,a){R.emit(e,t,p(t,a))}'
+        'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream})})'
+        'case"unload":return u=null,O=!1,d=[],N=null,D("stream"),D("videoParams"),!1;'
+    )
+    patched, count = _MOD.patch_hls_resume_timeline(source)
+    assert count == 1
+    # Only HLS v2 streams may consume Core resume time server-side.
+    assert '-1!==t.stream.url.indexOf("/hlsv2/")' in patched
+    # Direct streams retain Core's original time instead of being forced to zero.
+    assert 'time:__stremioHlsResumeOffset>0?0:i.time' in patched
 
 
 def test_hls_resume_timeline_is_idempotent():
