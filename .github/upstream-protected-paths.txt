@@ -66,3 +66,9 @@ tools/ci/run-tests.sh
 tools/ci/docs-contract.py
 tools/ci/release-docs-check.py
 tools/release/build_deployment_package.py
+
+# Fork-owned Core customizations: upstream changes here always require review.
+src/stremiosrv/library
+src/stremiosrv/api/hls.py
+src/stremiosrv/api/subs.py
+src/stremiosrv/config.py

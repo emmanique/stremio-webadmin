@@ -33,6 +33,120 @@ def patch_text(text: str) -> tuple[str, int]:
         return text, 0
     return text + INJECTION, 1
 
+# The bundled HTML5 player resets currentTime to zero during unload and only then publishes its
+# time property. Preserve the last real time notification and provide a precise lifecycle event for
+# the HLS cleanup loader before the media source is detached.
+UNLOAD_EVENT = 'window.dispatchEvent(new Event("stremio-webadmin:player-unload"))'
+UNLOAD_NEEDLE = 'removeAttribute("src"),'
+
+
+def patch_player_unload(text: str) -> tuple[str, int]:
+    if UNLOAD_EVENT in text:
+        return text, 0
+    # There are several player implementations in the bundle. Patch only unload sequences that
+    # reset currentTime immediately after removeAttribute/load; hls.js internal detach sequences
+    # do not have this shape and must remain untouched.
+    import re
+    pattern = re.compile(r'([A-Za-z_$][\w$]*)\.removeAttribute\("src"\),\1\.load\(\),\1\.currentTime=0,')
+    def repl(m):
+        v = m.group(1)
+        return f'{UNLOAD_EVENT},{v}.removeAttribute("src"),{v}.load(),'
+    patched, count = pattern.subn(repl, text)
+    return patched, count
+
+
+
+
+def patch_hls_resume_timeline(text: str) -> tuple[str, int]:
+    """Keep Core time global while an HLS transcode starts at a server-side offset."""
+    marker = "__stremioHlsResumeOffset"
+    if marker in text:
+        return text, 0
+
+    state_old = 'var A=this,u=null,O=!1,d=[],N=null,R=new i,c=!1,m={stream:!1,videoParams:!1};function L(e,t,a){R.emit(e,t,p(t,a))}'
+    state_new = (
+        'var A=this,u=null,O=!1,d=[],N=null,R=new i,c=!1,m={stream:!1,videoParams:!1},'
+        '__stremioHlsResumeOffset=0;function L(e,t,a){'
+        '"time"===t&&"number"==typeof a&&(__stremioHlsResumeOffset>0&&(a+=__stremioHlsResumeOffset)),'
+        '"duration"===t&&"number"==typeof a&&(__stremioHlsResumeOffset>0&&(a+=__stremioHlsResumeOffset)),'
+        'R.emit(e,t,p(t,a))}'
+    )
+    if text.count(state_old) != 1:
+        return text, 0
+    text = text.replace(state_old, state_new)
+
+    load_old = 'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream})})'
+    load_new = (
+        '__stremioHlsResumeOffset="number"==typeof i.time&&isFinite(i.time)&&i.time>0?Math.round(i.time):0,'
+        'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream,time:0})})'
+    )
+    if text.count(load_old) != 1:
+        return text, 0
+    text = text.replace(load_old, load_new)
+
+    unload_old = 'case"unload":return u=null,O=!1,d=[],N=null,D("stream"),D("videoParams"),!1;'
+    unload_new = 'case"unload":return u=null,O=!1,d=[],N=null,__stremioHlsResumeOffset=0,D("stream"),D("videoParams"),!1;'
+    if text.count(unload_old) != 1:
+        return text, 0
+    text = text.replace(unload_old, unload_new)
+    return text, 1
+
+
+
+def patch_external_subtitle_resume_query(text: str) -> tuple[str, int]:
+    """Forward the HLS resume offset to external WebVTT proxy URLs."""
+    marker = '["startTime",String(__stremioHlsResumeOffset)]'
+    if marker in text:
+        return text, 0
+    needle = 'new URLSearchParams([["from",e.url]]).toString()'
+    replacement = (
+        'new URLSearchParams(__stremioHlsResumeOffset>0?'
+        '[["from",e.url],["startTime",String(__stremioHlsResumeOffset)]]:'
+        '[["from",e.url]]).toString()'
+    )
+    count = text.count(needle)
+    if count != 2:
+        return text, 0
+    return text.replace(needle, replacement), count
+
+def patch_hls_resume_query(text: str) -> tuple[str, int]:
+    """Forward Stremio Core's millisecond resume offset to the HLS backend."""
+    marker = 'r.set("startTime",Math.max(0,Math.round(i.time)))'
+    if marker in text:
+        return text, 0
+    needle = 'var t=E(),r=new URLSearchParams([["mediaURL",a]]);return i.forceTranscoding&&r.set("forceTranscoding","1"),'
+    replacement = (
+        'var t=E(),r=new URLSearchParams([["mediaURL",a]]);'
+        'return "number"==typeof i.time&&isFinite(i.time)&&i.time>0&&'
+        'r.set("startTime",Math.max(0,Math.round(i.time))),'
+        'i.forceTranscoding&&r.set("forceTranscoding","1"),'
+    )
+    count = text.count(needle)
+    if count != 1:
+        return text, 0
+    return text.replace(needle, replacement), 1
+
+def patch_initial_resume(text: str) -> tuple[str, int]:
+    """Re-apply Core's initial resume time after media metadata is available."""
+    import re
+    marker = "__stremioResumeTime"
+    if marker in text:
+        return text, 0
+    pattern = re.compile(
+        r'([A-Za-z_$][\w$]*)\.autoplay="boolean"!=typeof ([A-Za-z_$][\w$]*)\.autoplay\|\|\2\.autoplay,'
+        r'\1\.currentTime=null!==\2\.time&&isFinite\(\2\.time\)\?parseInt\(\2\.time,10\)/1e3:0,'
+    )
+    def repl(m):
+        media, opts = m.group(1), m.group(2)
+        return (
+            f'{media}.autoplay="boolean"!=typeof {opts}.autoplay||{opts}.autoplay,'
+            f'{media}.currentTime=null!=={opts}.time&&isFinite({opts}.time)?parseInt({opts}.time,10)/1e3:0,'
+            f'{media}.__stremioResumeTime=null!=={opts}.time&&isFinite({opts}.time)?parseInt({opts}.time,10)/1e3:0,'
+            f'{media}.addEventListener("canplay",function __stremioResume(){{var t={media}.__stremioResumeTime;'
+            f'{media}.removeEventListener("canplay",__stremioResume);delete {media}.__stremioResumeTime;'
+            f't>0&&{media}.currentTime<1&&({media}.currentTime=t)}},{{once:!0}}),'
+        )
+    return pattern.subn(repl, text)
 
 def main() -> int:
     files = sorted(BUILD.rglob("scripts/main.js"))
@@ -43,7 +157,12 @@ def main() -> int:
     path = files[0]
     text = path.read_text(encoding="utf-8")
     patched, status = patch_text(text)
-    if status == 1:
+    patched, unload_count = patch_player_unload(patched)
+    patched, hls_resume_count = patch_hls_resume_query(patched)
+    patched, hls_timeline_count = patch_hls_resume_timeline(patched)
+    patched, external_sub_count = patch_external_subtitle_resume_query(patched)
+    resume_count = 0
+    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or resume_count:
         path.write_text(patched, encoding="utf-8")
         print(
             "[web-player] Continue Watching centre Play uses Core player "

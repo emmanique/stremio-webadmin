@@ -3,6 +3,7 @@ set -euo pipefail
 
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/andrewhack/stremio-libtorrent-server.git}"
 UPSTREAM_NAME="${UPSTREAM_NAME:-andrewhack/stremio-libtorrent-server}"
+BASE_BRANCH="${BASE_BRANCH:-development}"
 TARGET_BRANCH="${TARGET_BRANCH:-upstream/integration}"
 
 emit_output() {
@@ -15,14 +16,14 @@ git config user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}"
 git config user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 
 git remote add upstream "$UPSTREAM_URL" 2>/dev/null || git remote set-url upstream "$UPSTREAM_URL"
-git fetch --prune origin main
+git fetch --prune origin "$BASE_BRANCH"
 git fetch --prune upstream main
 
 # Seed the remote-tracking ref when a previous integration branch exists so
 # --force-with-lease can verify that nobody changed it unexpectedly.
 git fetch origin "$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH" 2>/dev/null || true
 
-MAIN_SHA="$(git rev-parse origin/main)"
+MAIN_SHA="$(git rev-parse "origin/$BASE_BRANCH")"
 TARGET_SHA="$(git rev-parse upstream/main)"
 TARGET_VERSION="$(git show "$TARGET_SHA:pyproject.toml" | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)"
 SHORT="${TARGET_SHA:0:12}"
@@ -77,7 +78,7 @@ write_header() {
         echo "Principal: $UPSTREAM_NAME"
         echo "Principal version: $TARGET_VERSION"
         echo "Principal SHA: $TARGET_SHA"
-        echo "Fork main before sync: $MAIN_SHA"
+        echo "Fork $BASE_BRANCH before sync: $MAIN_SHA"
     } > "$REPORT"
 }
 

@@ -166,6 +166,26 @@ def test_the_loader_keeps_checking_for_the_apps_default():
     assert r["intervals"] == 1
 
 
+@needs_node
+def test_hls_job_is_destroyed_when_spa_leaves_playback():
+    job = "0123456789abcdef"
+    r = _run(after=(
+        {"resource": f"http://stremio.example:8080/hlsv2/{job}/master.m3u8?mediaURL=x"},
+        {"event": "stremio-webadmin:player-unload"},
+    ))
+    destroys = [req for req in r["requests"] if req["url"].endswith(f"/hlsv2/{job}/destroy")]
+    assert destroys == [{"url": f"/hlsv2/{job}/destroy", "method": "GET"}]
+
+
+@needs_node
+def test_unrelated_resource_does_not_trigger_hls_destroy():
+    r = _run(after=(
+        {"resource": "http://stremio.example:8080/manifest.json"},
+        {"event": "stremio-webadmin:player-unload"},
+    ))
+    assert not [req for req in r["requests"] if req["url"].endswith("/destroy")]
+
+
 # --- the install script -----------------------------------------------------------------------
 
 _HASH = "74efd1a5d75ef3d804abe81c69bd4033c7cd49b1"

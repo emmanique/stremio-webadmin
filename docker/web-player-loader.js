@@ -157,6 +157,59 @@
         }
     }
 
+    // Track HLS jobs used by the SPA. The upstream web player creates /hlsv2 jobs but does not
+    // call the server's /destroy endpoint when its logical player is closed. Since the SPA remains
+    // loaded, page unload cannot be relied on and ffmpeg can otherwise continue reading the source.
+    var hlsJobs = {};
+    var HLS_JOB_RE = /\/hlsv2\/([^/?#]+)\/(?:master\.m3u8|index\.m3u8|init\.mp4|seg\d+\.m4s)/;
+
+    function rememberHlsUrl(value) {
+        try {
+            var match = String(value || '').match(HLS_JOB_RE);
+            if (match) {
+                hlsJobs[decodeURIComponent(match[1])] = true;
+            }
+        } catch (e) {
+            console.warn('Could not track HLS job:', e);
+        }
+    }
+
+    function destroyHlsJobs() {
+        var jobs = Object.keys(hlsJobs);
+        hlsJobs = {};
+        jobs.forEach(function (jobId) {
+            // keepalive lets the request finish while the SPA is changing view or the page is closing.
+            fetch('/hlsv2/' + encodeURIComponent(jobId) + '/destroy', {
+                method: 'GET',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                keepalive: true
+            }).catch(function (e) {
+                console.warn('Could not destroy HLS job ' + jobId + ':', e);
+            });
+        });
+    }
+
+    // Resource Timing sees HLS requests made by the media stack as well as ordinary fetch/XHR.
+    if (typeof PerformanceObserver !== 'undefined') {
+        try {
+            var hlsObserver = new PerformanceObserver(function (list) {
+                list.getEntries().forEach(function (entry) { rememberHlsUrl(entry.name); });
+            });
+            hlsObserver.observe({ type: 'resource', buffered: true });
+        } catch (e) {
+            console.warn('Could not observe HLS resources:', e);
+        }
+    }
+
+    // Page close remains a last-resort cleanup. Logical player unload is patched directly in
+    // the bundled player so hls.js internal media attach/detach cannot be mistaken for playback end.
+
+    if (window.addEventListener) {
+        window.addEventListener('stremio-webadmin:player-unload', destroyHlsJobs);
+        window.addEventListener('pagehide', destroyHlsJobs);
+    }
+
     async function start() {
         try {
             var resp = await fetch('localStorage.json');

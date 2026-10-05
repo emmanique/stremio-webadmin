@@ -83,3 +83,28 @@ grep -q 'backup-before-upgrade.sh' README.md
 grep -q 'development' docs/BRANCHING.md
 grep -q 'Full regression' docs/TESTING.md
 ! git ls-files | grep -Eq '(^|/)(\.venv-test|\.pytest_cache|__pycache__)(/|$)|\.env\.backup-'
+
+# Repository topology contract: the legacy repository is historical only.
+if grep -R --line-number --fixed-strings   --exclude='repo-guard.sh'   'emmanique/stremio-libtorrent-server-webadmin'   .github docker tools compose*.yaml README.md QUICKSTART.md docs/*.md 2>/dev/null; then
+  echo "Operational reference to legacy repository is forbidden." >&2
+  exit 1
+fi
+
+# Every locally customized Core path must also be protected from automatic upstream replacement.
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  case "$path" in \#*) continue ;; esac
+  grep -Fxq "$path" .github/upstream-protected-paths.txt || {
+    echo "Core customization is not upstream-protected: $path" >&2
+    exit 1
+  }
+done < .github/core-protected-paths.txt
+
+# Functional regression ownership is mandatory and shared by local/GitHub CI.
+test -f tools/ci/functional-regression.matrix
+test -x tools/ci/functional-regression.py
+test -x tools/ci/functional-regression.sh
+python3 tools/ci/functional-regression.py --validate
+for wf in ci-dev.yml regression-dev.yml functional-regression.yml upstream-sync.yml dev-images.yml; do
+  test -f ".github/workflows/$wf" || { echo "Missing DEV workflow: $wf" >&2; exit 1; }
+done

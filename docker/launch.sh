@@ -10,7 +10,7 @@
 set -e
 
 NAME="${NAME:-stremio-libtorrent-server}"
-IMAGE="${IMAGE:-stremio-libtorrent-server-webadmin:local}"
+IMAGE="${IMAGE:-stremio-webadmin:local}"
 DATA="${DATA:-/root/stremio-data}"
 WEB_PORT="${WEB_PORT:-8080}"
 HTTP_PORT="${HTTP_PORT:-11470}"

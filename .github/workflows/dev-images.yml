@@ -1,0 +1,45 @@
+name: DEV Images
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [development]
+    paths:
+      - Dockerfile
+      - webadmin/Dockerfile
+      - vpn/Dockerfile
+      - docker/**
+      - src/**
+      - webadmin/**
+      - vpn/**
+      - FORK_VERSION
+      - SERVER_VERSION
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce DEV publication contract
+        run: |
+          test "$GITHUB_REPOSITORY" = "emmanique/stremio-webadmin-dev"
+          VERSION="$(tr -d '[:space:]' < FORK_VERSION)"
+          case "$VERSION" in *-dev*) ;; *) echo "DEV images require a -dev version"; exit 1;; esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "SHA_TAG=dev-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+      - name: Login GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish DEV-only images
+        run: |
+          for spec in "server:.:" "webadmin:./webadmin:" "vpn:./vpn:"; do
+            name="${spec%%:*}"; rest="${spec#*:}"; context="${rest%%:*}"
+            image="ghcr.io/emmanique/stremio-${name}-dev"
+            docker build --label "org.opencontainers.image.source=https://github.com/emmanique/stremio-webadmin-dev" -t "$image:$VERSION" -t "$image:$SHA_TAG" "$context"
+            docker push "$image:$VERSION"
+            docker push "$image:$SHA_TAG"
+          done

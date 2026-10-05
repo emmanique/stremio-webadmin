@@ -26,8 +26,8 @@ VPN mode additionally requires `/dev/net/tun` to be available inside Docker Desk
 From Command Prompt or PowerShell:
 
 ```powershell
-git clone https://github.com/emmanique/stremio-libtorrent-server-webadmin.git
-cd stremio-libtorrent-server-webadmin
+git clone https://github.com/emmanique/stremio-webadmin.git
+cd stremio-webadmin
 ```
 
 ## Direct mode
@@ -150,10 +150,10 @@ $env:IPADDRESS = '192.168.1.244'
 The default Compose configuration uses GHCR. To use the Docker Hub mirror for the current shell session:
 
 ```powershell
-$env:STREMIO_IMAGE = 'edmanique/stremio-libtorrent-server-webadmin:1.6.9-server.18'
-$env:WEBADMIN_IMAGE = 'edmanique/stremio-libtorrent-server-webadmin:webadmin-1.4.1'
-$env:VPN_IMAGE = 'edmanique/stremio-libtorrent-server-webadmin:vpn-1.6.9-server.18'
-$env:STREMIO_PACKAGE_REPO = 'edmanique/stremio-libtorrent-server-webadmin'
+$env:STREMIO_IMAGE = 'ghcr.io/emmanique/stremio-server:<VERSION>'
+$env:WEBADMIN_IMAGE = 'ghcr.io/emmanique/stremio-webadmin:<VERSION>'
+$env:VPN_IMAGE = 'ghcr.io/emmanique/stremio-vpn:<VERSION>'
+$env:STREMIO_PACKAGE_REPO = 'ghcr.io/emmanique/stremio-server'
 .\start.ps1
 ```
 

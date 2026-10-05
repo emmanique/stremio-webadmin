@@ -307,3 +307,8 @@ Before every upgrade run `sh scripts/backup-before-upgrade.sh`, keep the existin
 Use `./start.sh` for normal installation/startup. It detects the host IP and GPU, exports the detected VAAPI render node to the Compose overlay, and leaves `VAAPI_DEVICE` portable/unset in `.env` unless the administrator explicitly overrides it. `./start.sh --help` is side-effect-free: it does not create/update `.env`, probe hardware, pull images, or start the stack. Direct use of `compose.vaapi.yaml` bypasses discovery and requires `VAAPI_DEVICE` in the invoking shell.
 
 AUTO preserves Stremio's playback decision: COPY stays COPY. Only after the core requests video transcoding does AUTO select the available execution backend (VAAPI encode, NVENC encode, or CPU/libx264 fallback). Hardware decode is not forced by GPU discovery.
+
+
+## Core upstream
+
+The authoritative upstream Core/Server source is https://github.com/andrewhack/stremio-libtorrent-server.

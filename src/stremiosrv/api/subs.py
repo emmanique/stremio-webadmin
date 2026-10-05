@@ -168,6 +168,55 @@ def to_webvtt(text: str) -> str:
     return srt_to_vtt(text)  # fallback: naive but charset-correct
 
 
+
+
+_VTT_TEXT_CUE_RE = re.compile(
+    r"(?m)^(?P<start>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})(?P<arrow>[ \t]+-->[ \t]+)(?P<end>(?:\d{2}:)?\d{2}:\d{2}\.\d{3})(?P<settings>[^\r\n]*)"
+)
+
+
+def _vtt_seconds(value: str) -> float:
+    parts = value.split(":")
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+    else:
+        hours, minutes, seconds = "0", parts[0], parts[1]
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _vtt_clock(seconds: float) -> str:
+    millis = max(0, round(seconds * 1000))
+    hours, rem = divmod(millis, 3600000)
+    minutes, rem = divmod(rem, 60000)
+    secs, millis = divmod(rem, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def rebase_webvtt(text: str, offset_seconds: float) -> str:
+    """Shift WebVTT cue clocks to the local HLS resume timeline."""
+    offset = max(0.0, float(offset_seconds or 0.0))
+    if offset <= 0:
+        return text
+    blocks = re.split(r"(\r?\n\r?\n)", text)
+    out = []
+    for block in blocks:
+        match = _VTT_TEXT_CUE_RE.search(block)
+        if match is None:
+            out.append(block)
+            continue
+        end = _vtt_seconds(match.group("end"))
+        if end <= offset:
+            continue
+        start = max(offset, _vtt_seconds(match.group("start")))
+        replacement = (
+            _vtt_clock(start - offset)
+            + match.group("arrow")
+            + _vtt_clock(end - offset)
+            + match.group("settings")
+        )
+        out.append(block[:match.start()] + replacement + block[match.end():])
+    return "".join(out)
+
 # A browser User-Agent for outbound subtitle fetches. Subtitle CDNs — notably subs5.strem.io, which
 # the OpenSubtitles addon serves through — return 403 to urllib's default "Python-urllib/x.y" agent;
 # that 403 became our 502 "failed to fetch subtitle" -> blank subs. A normal browser UA is accepted.
@@ -176,7 +225,7 @@ _FETCH_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 
 @router.get("/subtitles.{ext}")
-def subtitles_proxy(ext: str, request: Request, source: str = Query(alias="from")) -> Response:
+def subtitles_proxy(ext: str, request: Request, source: str = Query(alias="from"), startTime: int = 0) -> Response:
     """Fetch an external subtitle (Stremio passes `?from=<url>`) and serve it on our own origin —
     CORS-safe and format-normalized. Mirrors the stock server's `/subtitles.:ext`: **the client asks
     for the extension it wants.** Android/native players request **`.srt`** (SubRip, for ExoPlayer);
@@ -208,7 +257,7 @@ def subtitles_proxy(ext: str, request: Request, source: str = Query(alias="from"
     text = decode_subtitle(_decompress(raw, content_encoding))
     if ext.lower() == "vtt":
         # charset=utf-8 so strict players (ExoPlayer) don't second-guess the encoding.
-        return Response(content=to_webvtt(text), media_type="text/vtt; charset=utf-8")
+        return Response(content=rebase_webvtt(to_webvtt(text), max(0, min(int(startTime), 86400000)) / 1000.0), media_type="text/vtt; charset=utf-8")
     return Response(content=text, media_type="application/x-subrip; charset=utf-8")
 
 
@@ -390,20 +439,25 @@ def _trace_webvtt_timeline(payload: bytes, start: float | None, duration: float 
     )
 
 
-def _add_webvtt_timestamp_map(payload: bytes, start: float | None, mpegts_start: int = 0) -> bytes:
+def _add_webvtt_timestamp_map(payload: bytes, start: float | None, mpegts_start: int = 0, timeline_offset: float = 0.0) -> bytes:
     """Declare the HLS WebVTT clock for cues preserved on the media's absolute timeline."""
     if start is None or not payload.startswith(b"WEBVTT"):
         return payload
     # Window extraction uses -copyts, so FFmpeg's WebVTT cues remain on the media's absolute
     # timeline. Map LOCAL zero to MPEGTS zero; adding `start` here would shift every cue twice.
-    mapping = f"X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:{max(0, int(mpegts_start))}\n".encode("ascii")
+    local_ms = max(0, round(float(timeline_offset or 0.0) * 1000))
+    local_h, rem = divmod(local_ms, 3600000)
+    local_m, rem = divmod(rem, 60000)
+    local_s, local_ms = divmod(rem, 1000)
+    local_clock = f"{local_h:02d}:{local_m:02d}:{local_s:02d}.{local_ms:03d}"
+    mapping = f"X-TIMESTAMP-MAP=LOCAL:{local_clock},MPEGTS:{max(0, int(mpegts_start))}\n".encode("ascii")
     head, sep, tail = payload.partition(b"\n")
     if not sep:
         return payload
     return head + sep + mapping + tail
 
 
-def _read_webvtt_window(proc: subprocess.Popen, start: float | None, duration: float | None, mpegts_start: int = 0) -> bytes:
+def _read_webvtt_window(proc: subprocess.Popen, start: float | None, duration: float | None, mpegts_start: int = 0, timeline_offset: float = 0.0) -> bytes:
     """Collect one finite WebVTT window. Failed/empty output is deliberately not cacheable."""
     try:
         assert proc.stdout is not None
@@ -422,7 +476,7 @@ def _read_webvtt_window(proc: subprocess.Popen, start: float | None, duration: f
         if rc is None:
             rc = proc.poll()
         _trace_webvtt_timeline(payload, start, duration)
-        payload = _add_webvtt_timestamp_map(payload, start, mpegts_start)
+        payload = _add_webvtt_timestamp_map(payload, start, mpegts_start, timeline_offset)
         if rc:
             logger.warning("embedded subtitle ffmpeg exited with code %s", rc)
             return b""
@@ -437,14 +491,14 @@ def _read_webvtt_window(proc: subprocess.Popen, start: float | None, duration: f
                 proc.wait()
 
 
-def _cached_webvtt_window_stream(key: tuple, proc_factory, start: float | None, duration: float | None, mpegts_start: int = 0):
+def _cached_webvtt_window_stream(key: tuple, proc_factory, start: float | None, duration: float | None, mpegts_start: int = 0, timeline_offset: float = 0.0):
     """Deduplicate concurrent/retried HLS requests and reuse only completed VTT windows."""
     payload = _vtt_cache_get(key)
     if payload is None:
         with _vtt_window_lock(key):
             payload = _vtt_cache_get(key)
             if payload is None:
-                payload = _read_webvtt_window(proc_factory(), start, duration, mpegts_start)
+                payload = _read_webvtt_window(proc_factory(), start, duration, mpegts_start, timeline_offset)
                 _vtt_cache_put(key, payload)
     if payload:
         yield payload
@@ -459,6 +513,7 @@ def subtitles_vtt_guessed(
     start: float | None = None,
     duration: float | None = None,
     mpegtsStart: int = 0,
+    timelineOffset: float = 0.0,
 ) -> StreamingResponse:
     """Serve WebVTT when stremio-core uses -1 for an implicit file index.
 
@@ -475,6 +530,7 @@ def subtitles_vtt_guessed(
         start=start,
         duration=duration,
         mpegtsStart=mpegtsStart,
+        **({"timelineOffset": timelineOffset} if timelineOffset else {}),
     )
 
 
@@ -488,6 +544,7 @@ def subtitles_vtt(
     start: float | None = None,
     duration: float | None = None,
     mpegtsStart: int = 0,
+    timelineOffset: float = 0.0,
 ) -> StreamingResponse:
     media = resolve_media_input(request, mediaURL)
 
@@ -574,8 +631,8 @@ def subtitles_vtt(
     if windowed:
         # The finite prefix is an extraction boundary, not subtitle identity. Once a window has
         # completed successfully, growth of the torrent prefix must not invalidate/re-run it.
-        cache_key = (info_hash, resolved_idx, track, start, duration, mpegtsStart)
-        stream = _cached_webvtt_window_stream(cache_key, _start_proc, start, duration, mpegtsStart)
+        cache_key = (info_hash, resolved_idx, track, start, duration, mpegtsStart, timelineOffset)
+        stream = _cached_webvtt_window_stream(cache_key, _start_proc, start, duration, mpegtsStart, timelineOffset)
     else:
         stream = _webvtt_stream(_start_proc())
     return StreamingResponse(

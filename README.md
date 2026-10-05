@@ -585,3 +585,8 @@ The transcoding capability API uses AUTO semantics: backend/encoder self-tests a
 Windowed HLS WebVTT responses include `X-TIMESTAMP-MAP`, mapping FFmpeg's segment-local cue timestamps onto the corresponding 90 kHz HLS playback timeline.
 
 Subtitle HLS timing diagnostics are emitted only at debug log level; normal runtime logs remain quiet after validation.
+
+
+## Core upstream
+
+The authoritative upstream Core/Server source is https://github.com/andrewhack/stremio-libtorrent-server.

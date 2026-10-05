@@ -85,7 +85,7 @@ def _hls_quote(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _master_with_subtitles(master_text: str, probe: dict, media_url: str) -> str:
+def _master_with_subtitles(master_text: str, probe: dict, media_url: str, start_time_ms: int = 0) -> str:
     """Advertise embedded text subtitles in the HLS master without asking FFmpeg's HLS muxer to
     multiplex them.
 
@@ -117,7 +117,7 @@ def _master_with_subtitles(master_text: str, probe: dict, media_url: str) -> str
         seen_names[base_name] = seen_names.get(base_name, 0) + 1
         ordinal = seen_names[base_name]
         name = base_name if ordinal == 1 else f"{base_name} ({ordinal})"
-        query = urlencode({"mediaURL": media_url, "duration": duration})
+        query = urlencode({"mediaURL": media_url, "duration": max(0.0, duration - start_time_ms / 1000.0), "startTime": max(0, int(start_time_ms))})
         uri = f"subtitles/{track}.m3u8?{query}"
         media_lines.append(
             '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",'
@@ -140,7 +140,7 @@ def _master_with_subtitles(master_text: str, probe: dict, media_url: str) -> str
     return "\n".join(out) + ("\n" if master_text.endswith("\n") else "")
 
 
-def _subtitle_media_playlist(media_url: str, track: int, duration: float, mpegts_start: int = 0) -> str:
+def _subtitle_media_playlist(media_url: str, track: int, duration: float, mpegts_start: int = 0, start_time_ms: int = 0) -> str:
     """Build a VOD WebVTT media playlist with finite extraction windows."""
     parsed = parse_stream_url(media_url)
     if parsed is None:
@@ -158,12 +158,14 @@ def _subtitle_media_playlist(media_url: str, track: int, duration: float, mpegts
     ]
     for n in range(count):
         offset = n * segment
+        source_offset = max(0.0, start_time_ms / 1000.0) + offset
         length = min(segment, total - offset)
         query = urlencode({
             "mediaURL": media_url,
             "track": track,
-            "start": f"{offset:.3f}",
+            "start": f"{source_offset:.3f}",
             "duration": f"{length:.3f}",
+            "timelineOffset": f"{max(0.0, start_time_ms / 1000.0):.3f}",
             "mpegtsStart": int(mpegts_start),
         })
         lines += [
@@ -209,6 +211,7 @@ def master(
     audioCodecs: list[str] = Query(default=[]),
     maxAudioChannels: int = 2,
     maxWidth: int = 3840,
+    startTime: int = 0,
 ):
     conv = _converter(request)
     if conv is None:
@@ -243,6 +246,7 @@ def master(
     # the full probed stream inventory as private converter metadata so HLS can expose alternate
     # audio and text-subtitle renditions without changing the public fingerprint contract.
     dec["_streams"] = list(pr.get("streams") or [])
+    dec["_startTimeMs"] = max(0, min(int(startTime), 86400000))
     # A hardware transcoder can consume an incomplete torrent much faster than playback time,
     # outrunning the swarm and repeatedly stalling on the next missing piece. Pace only that case.
     # Complete/cache-backed media keeps the normal faster-than-realtime HLS warm-up behaviour.
@@ -268,7 +272,7 @@ def master(
         master_text = master_path.read_text(encoding="utf-8")
     except OSError as e:
         raise HTTPException(status_code=500, detail="failed to read master playlist") from e
-    body = _master_with_subtitles(master_text, pr, mediaURL)
+    body = _master_with_subtitles(master_text, pr, mediaURL, dec["_startTimeMs"])
     tracks = _subtitle_streams(pr)
     logger.debug(
         "subtitle trace: stage=master method=%s tracks=%s advertised=%s",
@@ -314,7 +318,7 @@ def _hls_mpegts_start(conv, job_id: str) -> int:
 
 
 @router.api_route("/{job_id}/subtitles/{track:int}.m3u8", methods=["GET", "HEAD"])
-def subtitle_playlist(job_id: str, track: int, request: Request, mediaURL: str, duration: float = 0.0):
+def subtitle_playlist(job_id: str, track: int, request: Request, mediaURL: str, duration: float = 0.0, startTime: int = 0):
     conv = _converter(request)
     if conv is None:
         raise HTTPException(status_code=503, detail="transcoder unavailable")
@@ -322,7 +326,7 @@ def subtitle_playlist(job_id: str, track: int, request: Request, mediaURL: str, 
     # browser is actively consuming the subtitle rendition.
     conv.touch(job_id)
     mpegts_start = _hls_mpegts_start(conv, job_id)
-    body = _subtitle_media_playlist(mediaURL, track, duration, mpegts_start)
+    body = _subtitle_media_playlist(mediaURL, track, duration, mpegts_start, max(0, min(int(startTime), 86400000)))
     logger.debug(
         "subtitle trace: stage=playlist method=%s track=%s",
         request.method,

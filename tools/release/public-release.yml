@@ -1,0 +1,61 @@
+name: Production Release
+
+on:
+  push:
+    tags:
+      - "v3.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Enforce production authority
+        run: |
+          test "$GITHUB_REPOSITORY" = "emmanique/stremio-webadmin"
+          VERSION="$(tr -d '[:space:]' < FORK_VERSION)"
+          WEBADMIN="$(tr -d '[:space:]' < webadmin/WEBADMIN_VERSION)"
+          case "$VERSION" in *-dev*) echo "DEV version cannot be published to production"; exit 1;; esac
+          test "$VERSION" = "$WEBADMIN"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then test "$GITHUB_REF_NAME" = "v$VERSION"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@v4
+      - name: Full production gate
+        run: |
+          uv lock --check
+          uv sync --frozen --dev
+          uv pip install -r webadmin/requirements.txt
+          bash tools/ci/full-regression.sh
+      - name: Login GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build stable images
+        run: |
+          docker build -t ghcr.io/emmanique/stremio-server:$VERSION -t ghcr.io/emmanique/stremio-server:latest .
+          docker build -t ghcr.io/emmanique/stremio-webadmin:$VERSION -t ghcr.io/emmanique/stremio-webadmin:latest ./webadmin
+          docker build -t ghcr.io/emmanique/stremio-vpn:$VERSION -t ghcr.io/emmanique/stremio-vpn:latest ./vpn
+      - name: Publish stable images
+        run: |
+          for image in stremio-server stremio-webadmin stremio-vpn; do
+            docker push ghcr.io/emmanique/$image:$VERSION
+            docker push ghcr.io/emmanique/$image:latest
+          done
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$VERSION"
+          NOTES="docs/releases/v$VERSION.md"
+          test -f "$NOTES"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Stremio WebAdmin $VERSION" --notes-file "$NOTES" --latest
+          else
+            gh release create "$TAG" --verify-tag --title "Stremio WebAdmin $VERSION" --notes-file "$NOTES" --latest
+          fi

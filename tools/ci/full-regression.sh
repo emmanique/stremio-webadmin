@@ -17,6 +17,8 @@ fi
 bash tools/ci/static-check.sh
 bash -x tools/ci/compose-check.sh
 "$PYTHON_BIN" tools/ci/release-docs-check.py
+python3 tools/ci/functional-regression.py --validate
+bash tools/ci/functional-regression.sh all
 bash tools/ci/run-tests.sh deterministic
 bash tools/ci/run-tests.sh integration
 

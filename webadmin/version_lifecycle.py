@@ -43,7 +43,7 @@ STALE_UPDATE_NOTICE = (
 )
 SAFE_UPDATE_NOTICE = (
     "Server updates use the versioned package published from "
-    "<code>emmanique/stremio-libtorrent-server-webadmin</code>. "
+    "<code>emmanique/stremio-webadmin</code>. "
     "No local source build is required; server and WebAdmin versions are managed independently."
 )
 STREMIO_ROCKS_RE = re.compile(
@@ -177,7 +177,22 @@ def _version_key(value: str | None) -> tuple[int, ...] | None:
     return numbers or None
 
 
+def _is_prerelease(value: str | None) -> bool:
+    if not value:
+        return False
+    return bool(re.search(r"(?:^|[.+-])(dev|alpha|beta|rc|pre)(?:[.+-]?\d*)?(?:$|[.+-])", value, re.IGNORECASE))
+
+
 def _component(installed: str | None, available: str | None, **extra) -> dict:
+    # Development/prerelease builds may intentionally run ahead of the
+    # configured release channel. Do not advertise an older release-channel
+    # version as the available target for such builds.
+    if _is_prerelease(installed):
+        installed_key = _version_key(installed)
+        available_key = _version_key(available)
+        if installed_key is not None and available_key is not None and available_key < installed_key:
+            available = None
+
     installed_key = _version_key(installed)
     available_key = _version_key(available)
     if installed_key is not None and available_key is not None:
@@ -213,7 +228,8 @@ def component_versions():
 
     return {
         "repositoryUrl": SOURCE_REPO,
-        "branch": SOURCE_BRANCH,
+        "branch": os.getenv("STREMIO_RUNTIME_BRANCH", SOURCE_BRANCH),
+        "updateChannel": SOURCE_BRANCH,
         "checkedAt": datetime.now(UTC).isoformat(),
         "core": {
             "installed": _core_version(),

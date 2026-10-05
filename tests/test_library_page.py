@@ -1219,3 +1219,14 @@ def test_the_card_uses_the_pack_caption_and_the_viewing_order():
     assert "kidsInOrder(kids)" in page
     # the partial-file leftovers read as a remainder, after the episodes
     assert ".join('')}${scrapsHtml}</div>`" in page
+
+
+def test_library_inline_javascript_is_syntactically_valid(tmp_path):
+    """A syntax error leaves the UI permanently stuck on 'Signing in…'."""
+    import subprocess
+    script = re.search(r"<script>(.*?)</script>", _page(), re.S)
+    assert script, "library page has no inline script"
+    js = tmp_path / "library-inline.js"
+    js.write_text(script.group(1), encoding="utf-8")
+    result = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

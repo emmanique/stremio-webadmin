@@ -754,7 +754,7 @@ def test_dashboard_prefers_registry_activity_for_direct_streams():
     assert "classifyPlayback(state.streams,transcoding,state.playback)" in dashboard
     assert "registryAvailable=!!(playback&&Array.isArray(playback.active))" in dashboard
     assert "if(registryAvailable){let correlated=0;activity.forEach" in dashboard
-    assert "if(correlated)return" in dashboard
+    assert "byHash.forEach(s=>{if(s.playbackModes.length)s.playbackMode=s.playbackModes[0]});return" in dashboard
 
 
 def test_dashboard_correlates_hls_registry_job_to_transcoding_session():
@@ -814,7 +814,7 @@ console.log(JSON.stringify(streams));
     return json.loads(result.stdout)
 
 
-def test_playback_empty_registry_falls_back_to_active_stream():
+def test_playback_empty_registry_does_not_promote_active_torrent_to_playing():
     streams = [{
         "infoHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "active": True,
@@ -826,10 +826,13 @@ def test_playback_empty_registry_falls_back_to_active_stream():
         {"active": []},
     )
 
-    assert result[0]["playbackActive"] is True
-    assert result[0]["playbackCount"] == 1
-    assert result[0]["playbackMode"] == "direct"
-    assert result[0]["playbackModes"] == ["direct"]
+    # The playback registry exists and explicitly reports no active playback.
+    # A torrent may still be active for seeding/download purposes, but that is
+    # not evidence that a media player is consuming it.
+    assert result[0]["playbackActive"] is False
+    assert result[0]["playbackCount"] == 0
+    assert result[0]["playbackMode"] is None
+    assert result[0]["playbackModes"] == []
 
 
 def test_playback_correlated_registry_remains_authoritative():
@@ -899,11 +902,11 @@ def test_playback_multiple_active_streams_do_not_inherit_one_ffmpeg_mode():
         {"active": []},
     )
 
-    assert result[0]["playbackActive"] is True
-    assert result[1]["playbackActive"] is True
+    assert result[0]["playbackActive"] is False
+    assert result[1]["playbackActive"] is False
 
-    assert result[0]["playbackMode"] == "direct"
-    assert result[1]["playbackMode"] == "direct"
+    assert result[0]["playbackMode"] is None
+    assert result[1]["playbackMode"] is None
 
-    assert result[0]["playbackModes"] == ["direct"]
-    assert result[1]["playbackModes"] == ["direct"]
+    assert result[0]["playbackModes"] == []
+    assert result[1]["playbackModes"] == []

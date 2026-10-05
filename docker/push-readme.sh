@@ -15,7 +15,7 @@
 set -e
 
 DOCKERHUB_USER="${DOCKERHUB_USER:-edmanique}"
-REPO="${REPO:-edmanique/stremio-libtorrent-server-webadmin}"
+REPO="${REPO:-emmanique/stremio-webadmin}"
 README="${README:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/README.md}"
 API="https://hub.docker.com/v2"
 DOCKER_CONFIG_JSON="${DOCKER_CONFIG_JSON:-$HOME/.docker/config.json}"
