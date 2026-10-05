@@ -128,6 +128,26 @@ def patch_hls_resume_query(text: str) -> tuple[str, int]:
         return text, 0
     return text.replace(needle, replacement), 1
 
+
+
+def patch_player_library_resume_dependency(text: str) -> tuple[str, int]:
+    """Reload playback when the selected video's Library resume state changes.
+
+    Stremio Web's player load effect reads De.libraryItem.state.timeOffset but does not
+    subscribe to De.libraryItem.  After a stop/reopen in the same SPA session this can
+    therefore launch once with stale time=0; a browser refresh works because it rebuilds
+    the model.  Add the Library item to the effect dependency list so the canonical Core
+    state can trigger the load again without inventing a second resume store.
+    """
+    marker = 'De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze'
+    if marker in text:
+        return text, 0
+    needle = '},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time'
+    replacement = '},[De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time'
+    if text.count(needle) != 1:
+        return text, 0
+    return text.replace(needle, replacement), 1
+
 def patch_initial_resume(text: str) -> tuple[str, int]:
     """Re-apply Core's initial resume time after media metadata is available."""
     import re
@@ -163,12 +183,13 @@ def main() -> int:
     patched, hls_resume_count = patch_hls_resume_query(patched)
     patched, hls_timeline_count = patch_hls_resume_timeline(patched)
     patched, external_sub_count = patch_external_subtitle_resume_query(patched)
+    patched, library_resume_count = patch_player_library_resume_dependency(patched)
     # HTML5/direct players may receive Core resume time before media metadata is ready.
     # Re-apply that same Core time after canplay. HLS remains isolated: its Core time is
     # consumed server-side by startTime and patch_hls_resume_timeline passes time=0 to
     # the HTML5 player, so this cannot apply the HLS offset twice.
     patched, resume_count = patch_initial_resume(patched)
-    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or resume_count:
+    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or library_resume_count or resume_count:
         path.write_text(patched, encoding="utf-8")
         print(
             "[web-player] Continue Watching centre Play uses Core player "

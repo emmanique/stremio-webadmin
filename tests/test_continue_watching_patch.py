@@ -194,3 +194,21 @@ def test_resume_patches_keep_hls_server_offset_and_html5_resume_independent():
     assert 's.__stremioResumeTime=' in patched
     # HLS hands zero to HTML5, so the HTML5 canplay repair cannot double-apply the HLS offset.
     assert '__stremioHlsResumeOffset>0?0:i.time' in patched
+
+
+def test_player_load_reacts_to_fresh_library_resume_state():
+    source = ('Ue.load({time:De.libraryItem.state.timeOffset})'
+              '},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time')
+    patched, count = _MOD.patch_player_library_resume_dependency(source)
+    assert count == 1
+    assert '[De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze]' in patched
+    assert 'Ue.load({time:De.libraryItem.state.timeOffset})' in patched
+
+
+def test_player_library_resume_dependency_is_idempotent():
+    source = ('x},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time')
+    once, count = _MOD.patch_player_library_resume_dependency(source)
+    assert count == 1
+    twice, count = _MOD.patch_player_library_resume_dependency(once)
+    assert count == 0
+    assert twice == once
