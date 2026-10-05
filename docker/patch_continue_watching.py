@@ -129,6 +129,22 @@ def patch_hls_resume_query(text: str) -> tuple[str, int]:
     return text.replace(needle, replacement), 1
 
 
+def patch_player_wait_for_library_resume(text: str) -> tuple[str, int]:
+    """Do not launch a zero-offset HLS job while Core is still loading Library state."""
+    marker = '__stremioLibraryReadyForLoad'
+    if marker in text:
+        return text, 0
+    needle = 'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&Ue.load({'
+    replacement = (
+        'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&'
+        '"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&'
+        '(__stremioLibraryReadyForLoad=null!==De.libraryItem||null===De.selected.streamRequest||'
+        'null===De.selected.streamRequest.path,__stremioLibraryReadyForLoad)&&Ue.load({'
+    )
+    if text.count(needle) != 1:
+        return text, 0
+    return text.replace(needle, replacement), 1
+
 
 def patch_player_library_resume_dependency(text: str) -> tuple[str, int]:
     """Reload playback when the selected video's Library resume state changes.
@@ -147,6 +163,22 @@ def patch_player_library_resume_dependency(text: str) -> tuple[str, int]:
     if text.count(needle) != 1:
         return text, 0
     return text.replace(needle, replacement), 1
+
+def patch_hls_autoplay_after_attach(text: str) -> tuple[str, int]:
+    """Retry autoplay after hls.js has attached media and parsed the resumed manifest."""
+    marker = 'Events.MANIFEST_PARSED,function(){i.autoplay&&!s.paused||s.play().catch(function(){})}'
+    if marker in text:
+        return text, 0
+    needle = 'I.loadSource(O.url),I.attachMedia(s)'
+    replacement = (
+        'I.on(o.Events.MANIFEST_PARSED,function(){i.autoplay&&!s.paused||s.play().catch(function(){})}),'
+        'I.loadSource(O.url),I.attachMedia(s)'
+    )
+    # Only the primary HTMLVideo+hls.js implementation has this exact minified sequence.
+    if text.count(needle) != 1:
+        return text, 0
+    return text.replace(needle, replacement), 1
+
 
 def patch_initial_resume(text: str) -> tuple[str, int]:
     """Re-apply Core's initial resume time after media metadata is available."""
@@ -183,13 +215,15 @@ def main() -> int:
     patched, hls_resume_count = patch_hls_resume_query(patched)
     patched, hls_timeline_count = patch_hls_resume_timeline(patched)
     patched, external_sub_count = patch_external_subtitle_resume_query(patched)
+    patched, library_wait_count = patch_player_wait_for_library_resume(patched)
     patched, library_resume_count = patch_player_library_resume_dependency(patched)
+    patched, hls_autoplay_count = patch_hls_autoplay_after_attach(patched)
     # HTML5/direct players may receive Core resume time before media metadata is ready.
     # Re-apply that same Core time after canplay. HLS remains isolated: its Core time is
     # consumed server-side by startTime and patch_hls_resume_timeline passes time=0 to
     # the HTML5 player, so this cannot apply the HLS offset twice.
     patched, resume_count = patch_initial_resume(patched)
-    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or library_resume_count or resume_count:
+    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or library_wait_count or library_resume_count or hls_autoplay_count or resume_count:
         path.write_text(patched, encoding="utf-8")
         print(
             "[web-player] Continue Watching centre Play uses Core player "
