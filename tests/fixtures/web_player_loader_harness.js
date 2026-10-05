@@ -25,21 +25,41 @@ const localStorage = {
 
 let reloads = 0;
 const intervals = [];
+const events = {};
+const requests = [];
+let performanceCallback = null;
 const fetch = async (url, opts = {}) => {
+  requests.push({ url: String(url), method: opts.method || 'GET' });
   if (url === 'localStorage.json') {
     return { ok: true, status: 200, statusText: 'OK', json: async () => JSON.parse(JSON.stringify(scenario.seedFile)) };
   }
   if (url === 'server_url.env' && (opts.method || 'GET') === 'HEAD') {
     return scenario.envOk ? { ok: true, status: 200, statusText: 'OK' } : { ok: false, status: 404, statusText: 'Not Found' };
   }
+  if (String(url).match(/^\/hlsv2\/[^/]+\/destroy$/)) {
+    return { ok: true, status: 200, statusText: 'OK' };
+  }
   throw new Error(`unexpected fetch: ${url}`);
 };
+
+function HTMLMediaElement() {}
+HTMLMediaElement.prototype.removeAttribute = function (name) {
+  if (String(name).toLowerCase() === 'src') this.src = '';
+};
+const video = new HTMLMediaElement();
+video.tagName = 'VIDEO';
 
 const sandbox = {
   localStorage,
   fetch,
+  HTMLMediaElement,
   console: { log() {}, warn() {}, error() {} },
   setInterval: (fn) => { intervals.push(fn); return intervals.length; },
+  addEventListener: (name, fn) => { (events[name] ||= []).push(fn); },
+  PerformanceObserver: class {
+    constructor(fn) { performanceCallback = fn; }
+    observe() {}
+  },
   location: { href: scenario.origin, reload: () => { reloads += 1; } },
 };
 sandbox.window = sandbox;
@@ -53,11 +73,18 @@ const settle = async () => { for (let i = 0; i < 10; i += 1) await new Promise((
   for (const step of scenario.afterLoad || []) {
     if (step === 'tick') intervals.forEach((fn) => fn());
     else if (step.set) localStorage.setItem(step.set[0], asText(step.set[1]));
+    else if (step.resource && performanceCallback) {
+      performanceCallback({ getEntries: () => [{ name: step.resource }] });
+    } else if (step.event) {
+      (events[step.event] || []).forEach((fn) => fn());
+    } else if (step.videoUnload) {
+      video.removeAttribute('src');
+    }
     await settle();
   }
   const storage = {};
   for (const [k, v] of store) {
     try { storage[k] = JSON.parse(v); } catch (e) { storage[k] = v; }
   }
-  process.stdout.write(JSON.stringify({ reloads, intervals: intervals.length, storage }));
+  process.stdout.write(JSON.stringify({ reloads, intervals: intervals.length, storage, requests }));
 })();

@@ -439,3 +439,31 @@ def test_subtitle_media_playlist_propagates_mpegts_start():
 
     assert "mpegtsStart=129750" in body
     assert body.count("mpegtsStart=129750") == 2
+
+
+def test_hls_resume_propagates_offset_to_embedded_subtitle_playlist():
+    from stremiosrv.api.hls import _master_with_subtitles, _subtitle_media_playlist
+
+    info_hash = "e" * 40
+    media = f"https://host/{info_hash}/1?"
+    master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\nindex.m3u8\n"
+    probe = {
+        "format": {"duration": 7220.768},
+        "streams": [{"index": 2, "track": "subtitle", "codec": "subrip", "lang": "eng"}],
+    }
+    out = _master_with_subtitles(master, probe, media, 674804)
+    assert "startTime=674804" in out
+    assert "duration=6545.964" in out
+
+    playlist = _subtitle_media_playlist(media, 2, 6545.964, 0, 674804)
+    assert "start=674.804" in playlist
+    assert "timelineOffset=674.804" in playlist
+    assert "start=704.804" in playlist
+
+
+def test_webvtt_timestamp_map_can_rebase_resume_offset():
+    from stremiosrv.api.subs import _add_webvtt_timestamp_map
+
+    payload = b"WEBVTT\n\n00:11:15.000 --> 00:11:17.000\nHello\n"
+    out = _add_webvtt_timestamp_map(payload, 674.804, 0, 674.804)
+    assert b"X-TIMESTAMP-MAP=LOCAL:00:11:14.804,MPEGTS:0" in out

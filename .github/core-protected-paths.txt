@@ -1,0 +1,8 @@
+# Fork-owned modifications inside the upstream Core.
+# Any upstream change touching these paths requires manual review.
+src/stremiosrv/library
+src/stremiosrv/metrics.py
+src/stremiosrv/transcode/converter.py
+src/stremiosrv/api/hls.py
+src/stremiosrv/api/subs.py
+src/stremiosrv/config.py

@@ -14,7 +14,7 @@ info() { echo "[INFO] $*"; }
 MODE="${1:-}"
 TAG="${2:-}"
 
-PRIVATE_REPO="/root/stremio-libtorrent-server-webadmin"
+PRIVATE_REPO="/opt/stremio-webadmin"
 PUBLIC_REPO="/root/stremio-webadmin-public"
 
 WORK="/root/stremio-public-promotion-check"
@@ -94,10 +94,10 @@ if [ "$FAIL" -eq 0 ]; then
     # Update only private origin/main. The requested private release
     # tag is validated independently against origin with ls-remote.
     if git fetch origin --prune --no-tags \
-        '+refs/heads/main:refs/remotes/origin/main'; then
-        ok "Private main actualizado sem importar tags"
+        '+refs/heads/development:refs/remotes/origin/development'; then
+        ok "Private development actualizado sem importar tags"
     else
-        fail "Falha no fetch de private origin/main"
+        fail "Falha no fetch de private origin/development"
     fi
 
     if git fetch public --prune --no-tags \
@@ -172,11 +172,11 @@ fi
 if [ "$FAIL" -eq 0 ]; then
 
     if git merge-base --is-ancestor \
-        "$LOCAL_TAG_COMMIT" origin/main; then
+        "$LOCAL_TAG_COMMIT" origin/development; then
 
-        ok "Private tag integrada em origin/main"
+        ok "Private tag integrada em origin/development"
     else
-        fail "Private tag nao integrada em origin/main"
+        fail "Private tag nao integrada em origin/development"
     fi
 fi
 
@@ -244,6 +244,8 @@ if [ "$FAIL" -eq 0 ]; then
     rm -f "$WORK/.env"
 
     rm -rf "$WORK/.github/workflows"
+    mkdir -p "$WORK/.github/workflows"
+    cp "$PRIVATE_REPO/tools/release/public-release.yml" "$WORK/.github/workflows/release.yml"
     rm -f "$WORK/.github/UPSTREAM_BASE"
     rm -f "$WORK/.github/upstream-protected-paths.txt"
     rm -f "$WORK/.github/dependabot.yml"
@@ -283,10 +285,10 @@ if [ "$FAIL" -eq 0 ]; then
         cat /tmp/stremio-promotion-sensitive.txt
     fi
 
-    if [ ! -d "$WORK/.github/workflows" ]; then
-        ok "Internal workflows removidos"
+    if [ -f "$WORK/.github/workflows/release.yml" ] && [ "$(find "$WORK/.github/workflows" -type f | wc -l)" -eq 1 ]; then
+        ok "Apenas workflow publico de producao presente"
     else
-        fail "Internal workflows presentes"
+        fail "Workflows publicos inesperados"
     fi
 
     if [ ! -e "$WORK/tools/release" ]; then
@@ -440,6 +442,8 @@ if [ "$FAIL" -eq 0 ] &&
         rm -f "$EXISTING/.env"
 
         rm -rf "$EXISTING/.github/workflows"
+        mkdir -p "$EXISTING/.github/workflows"
+        cp "$PRIVATE_REPO/tools/release/public-release.yml" "$EXISTING/.github/workflows/release.yml"
         rm -f "$EXISTING/.github/UPSTREAM_BASE"
         rm -f "$EXISTING/.github/upstream-protected-paths.txt"
         rm -f "$EXISTING/.github/dependabot.yml"
@@ -707,11 +711,14 @@ PRIVATE_HEAD="$(git rev-parse HEAD)"
 echo "Private branch=$PRIVATE_BRANCH"
 echo "Private HEAD=$PRIVATE_HEAD"
 
-if [ "$PRIVATE_BRANCH" = "main" ]; then
-    ok "Private repository permaneceu em main"
-else
-    fail "Private branch mudou inesperadamente"
-fi
+case "$PRIVATE_BRANCH" in
+    development|integration/*|release/*)
+        ok "Private repository permaneceu numa branch DEV autorizada"
+        ;;
+    *)
+        fail "Private branch inesperada: $PRIVATE_BRANCH"
+        ;;
+esac
 
 if [ "$MODE" = "--dry-run" ]; then
     ok "Dry-run nao publicou codigo"

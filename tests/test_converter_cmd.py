@@ -439,3 +439,24 @@ def test_incomplete_torrent_hls_input_is_paced_at_realtime():
 def test_complete_hls_input_is_not_realtime_paced():
     cmd = build_hls_cmd("http://x/0", DEC_TRANSCODE, None, "/tmp/j")
     assert "-re" not in cmd
+
+
+def test_resume_start_time_is_input_seek_before_media():
+    decision = {
+        "video": {"action": "copy"},
+        "audio": {"action": "copy"},
+        "_startTimeMs": 600686,
+    }
+    cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
+    assert cmd[cmd.index("-ss") + 1] == "600.686"
+    assert cmd.index("-ss") < cmd.index("-i")
+
+
+def test_zero_resume_start_time_does_not_add_seek():
+    decision = {
+        "video": {"action": "copy"},
+        "audio": {"action": "copy"},
+        "_startTimeMs": 0,
+    }
+    cmd = build_hls_cmd("http://x/0", decision, None, "/tmp/j")
+    assert "-ss" not in cmd

@@ -1,0 +1,48 @@
+name: Controlled Core Upstream Sync
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: development
+          fetch-depth: 0
+      - name: Prepare controlled upstream integration
+        id: sync
+        env:
+          UPSTREAM_URL: https://github.com/andrewhack/stremio-libtorrent-server.git
+          UPSTREAM_NAME: andrewhack/stremio-libtorrent-server
+          BASE_BRANCH: development
+          TARGET_BRANCH: upstream/integration
+        run: bash tools/upstream/controlled_sync.sh
+      - uses: astral-sh/setup-uv@v4
+        if: steps.sync.outputs.changed == 'true'
+      - name: Validate upstream integration
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          uv lock --check
+          uv sync --frozen --dev
+          uv pip install -r webadmin/requirements.txt
+          bash tools/ci/full-regression.sh
+      - name: Open integration PR
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ steps.sync.outputs.version }}
+          TARGET_SHA: ${{ steps.sync.outputs.target }}
+        run: |
+          existing="$(gh pr list --state open --base development --head upstream/integration --json number --jq '.[0].number // empty')"
+          title="Integrate Core upstream $TARGET_VERSION"
+          body="Controlled integration of andrewhack/stremio-libtorrent-server $TARGET_VERSION ($TARGET_SHA). Fork/Core protected paths are preserved and require explicit review before merge."
+          if [ -n "$existing" ]; then gh pr edit "$existing" --title "$title" --body "$body"; else gh pr create --base development --head upstream/integration --title "$title" --body "$body"; fi

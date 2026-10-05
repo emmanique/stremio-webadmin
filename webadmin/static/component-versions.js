@@ -147,7 +147,7 @@
     if (notice) {
       notice.innerHTML = `
         <strong>Independent package release lifecycles.</strong><br>
-        Server updates come only from published packages of <code>emmanique/stremio-libtorrent-server-webadmin</code> and start only when a different <code>SERVER_VERSION</code> is verified.
+        Server updates come only from published packages of <code>emmanique/stremio-webadmin</code> and start only when a different <code>SERVER_VERSION</code> is verified.
         A WebAdmin update never triggers a server rebuild. To activate a WebAdmin package on the host, run:<br><br>
         <code id="webadminUpdateCommand">docker compose pull webadmin &amp;&amp; docker compose up -d --no-deps webadmin</code>
         <button class="mini" id="copyWebadminUpdate" type="button" style="margin-left:8px">Copy command</button>`;

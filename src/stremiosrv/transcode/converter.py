@@ -207,6 +207,9 @@ def build_hls_cmd(
             if color_space:
                 argv += ["-colorspace", color_space]
 
+    start_time_ms = max(0, int(decision.get("_startTimeMs") or 0))
+    if start_time_ms:
+        argv += ["-ss", f"{start_time_ms / 1000:.3f}"]
     if decision.get("_realtimeInput"):
         argv += ["-re"]
     argv += ["-i", media_url, "-map", "0:v:0"]

@@ -15,7 +15,7 @@
 #                RELEASE_NAME, GH_TOKEN, ALLOW_DIRTY, ALLOW_VERSION_MISMATCH.
 set -e
 
-REPO="${REPO:-edmanique/stremio-libtorrent-server-webadmin}"
+REPO="${REPO:-emmanique/stremio-webadmin}"
 LOCAL="${LOCAL:-$REPO:latest}"
 SMOKE_PORT="${SMOKE_PORT:-18099}"
 SMOKE_NAME="${SMOKE_NAME:-stremio-publish-smoke}"

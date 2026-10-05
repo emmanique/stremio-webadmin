@@ -34,7 +34,7 @@ SOURCE_REPO = os.getenv(
     "STREMIO_SOURCE_REPO", "https://github.com/emmanique/stremio-webadmin"
 )
 SOURCE_ARCHIVE = SOURCE_REPO.rstrip("/") + "/archive/refs/heads/main.tar.gz"
-IMAGE = os.getenv("STREMIO_IMAGE", "stremio-libtorrent-server-webadmin:local")
+IMAGE = os.getenv("STREMIO_IMAGE", "stremio-webadmin:local")
 UPDATE_LOCK = threading.Lock()
 CONFIG_LOCK = threading.RLock()
 RESTART_LOCK = threading.Lock()

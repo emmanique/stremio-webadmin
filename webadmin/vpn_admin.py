@@ -141,6 +141,22 @@ def _active_profile_provider() -> str | None:
     return provider or None
 
 
+def _active_profile_outbound_subnets() -> str | None:
+    try:
+        profile_id = (VPN_DIR / "active_profile").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not re.fullmatch(r"[a-z0-9_-]+", profile_id):
+        return None
+    try:
+        value = (VPN_DIR / "profiles" / profile_id / "firewall_outbound_subnets.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return None
+    return value or None
+
+
 def _read_public_config() -> dict[str, object]:
     gluetun = _container(GLUETUN_CONTAINER)
     env = _env(gluetun)
@@ -149,9 +165,12 @@ def _read_public_config() -> dict[str, object]:
         "protocol": env.get("OPENVPN_PROTOCOL", "udp"),
         "country": env.get("SERVER_COUNTRIES", ""),
         "hostname": env.get("SERVER_HOSTNAMES", ""),
-        "firewall_outbound_subnets": env.get(
-            "FIREWALL_OUTBOUND_SUBNETS",
-            "192.168.0.0/16,10.0.0.0/8,172.30.0.0/24",
+        "firewall_outbound_subnets": (
+            _active_profile_outbound_subnets()
+            or env.get(
+                "FIREWALL_OUTBOUND_SUBNETS",
+                "192.168.0.0/16,10.0.0.0/8,172.30.0.0/24",
+            )
         ),
     }
     result: dict[str, object] = {}
@@ -535,6 +554,18 @@ def disconnect_vpn():
         VPN_LOCK.release()
 
 
+def _wait_for_vpn_stopped(timeout: float = 15.0) -> tuple[bool, str]:
+    deadline = time.time() + timeout
+    last = "unknown"
+    while time.time() < deadline:
+        status = _control_optional("/v1/vpn/status") or {}
+        last = str(status.get("status") or status.get("vpn_status") or "unknown").lower()
+        if last in {"stopped", "off", "disabled"}:
+            return True, last
+        time.sleep(0.5)
+    return False, last
+
+
 def reconnect_vpn():
     if not _vpn_requested():
         return connect_vpn()
@@ -543,7 +574,9 @@ def reconnect_vpn():
     try:
         try:
             _control("PUT", "/v1/vpn/status", {"status": "stopped"}, timeout=10)
-            time.sleep(1)
+            stopped, stop_detail = _wait_for_vpn_stopped(timeout=15)
+            if not stopped:
+                _audit("vpn.reconnect.stop_wait", f"status={stop_detail}")
             _control("PUT", "/v1/vpn/status", {"status": "running"}, timeout=10)
         except Exception:
             # The supervisor may still be starting Gluetun; keep the persistent

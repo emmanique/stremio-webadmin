@@ -336,12 +336,14 @@ def playable_index(entry: dict) -> int | None:
     return 0 if not files else None
 
 
-def stream_for(entry: dict, origin: str, file_idx: int | None = None) -> dict | None:
+def stream_for(entry: dict, origin: str, file_idx: int | None = None,
+               own_page: bool = False) -> dict | None:
     """One stream entry pointing at the copy already on disk, or None when there is no file index
     to point it at -- see `playable_index` for when that happens.
 
     `bingeGroup` ties every episode of one torrent together so the app can play the next one
-    without asking again.
+    without asking again. `own_page`: the row is for this library's own title page, which is
+    titled by `display_name` -- anywhere else, the app titles the page from its own catalog.
     """
     idx = playable_index(entry) if file_idx is None else file_idx
     if idx is None:
@@ -349,10 +351,24 @@ def stream_for(entry: dict, origin: str, file_idx: int | None = None) -> dict | 
     ih = entry["infoHash"].lower()
     # Describe the file being offered when the entry knows it -- a pack's own size on one episode's
     # row is the wrong number. The file name goes first, the way every other source row names what
-    # it is about to play, so ours is recognisable beside them.
-    chosen = next((f for f in (entry.get("files") or []) if f.get("index") == idx), None)
-    if chosen is not None and len(entry.get("files") or []) > 1:
-        title = _basename(chosen.get("name") or "") + "\n" + describe_file(entry, chosen)
+    # it is about to play, so ours is recognisable beside them. A single-file torrent too: two
+    # copies of one title otherwise differ only by a size.
+    files = entry.get("files") or []
+    chosen = next((f for f in files if f.get("index") == idx), None)
+    if chosen is None and idx == 0 and len(files) == 1:
+        # Listed from disk with no index (no engine record, as after a restart), and offered as
+        # index 0 by playable_index: it is still that one file.
+        chosen = files[0]
+    if chosen is not None:
+        title = describe_file(entry, chosen)
+        name = _basename(chosen.get("name") or "")
+        # Not when the page above already says it: our own page is titled by display_name, which
+        # for an entry with no label name is its own -- for a single-file torrent, this file's. The
+        # page decides, not the label: a title learned at playback has a label with no name, and
+        # on its page in the app (titled from Stremio's catalog) the row must still name the file.
+        shown = (entry.get("label") or {}).get("name") or entry.get("name") or ""
+        if name and not (own_page and name == _basename(shown)):
+            title = name + "\n" + title
     else:
         title = describe(entry)
     return {
