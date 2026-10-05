@@ -851,3 +851,32 @@ def test_stream_order_is_stable_when_no_last_source_was_recorded():
                  label={"type": "movie", "metaId": "tt0000091", "name": "Film"})
     streams = am.streams_for_meta_id({"entries": [one, two]}, "tt0000091", ORIGIN)
     assert [s["url"] for s in streams] == [f"{ORIGIN}/{IH}/0", f"{ORIGIN}/{('ab' * 20)}/0"]
+
+def test_partial_wanted_file_is_not_exposed_as_local_library_stream():
+    """Download progress is not playback availability: a partial local file is not a local stream."""
+    e = _entry(
+        label={"type": "movie", "metaId": "tt7654321", "name": "Partial Film"},
+        wantedFile="Partial.Film.mkv",
+        state="downloading",
+        progress=0.45,
+        files=[{"index": 0, "name": "Partial.Film.mkv", "size": 1_000_000_000,
+                "downloaded": 450_000_000, "progress": 0.45, "wanted": True}],
+    )
+    assert am.playable_index(e) is None
+    assert am.streams_for_meta_id({"entries": [e]}, "tt7654321", ORIGIN) == []
+
+
+def test_complete_wanted_file_is_exposed_as_local_library_stream():
+    """Once fully cached, the same file becomes a local stream independently of watched position."""
+    e = _entry(
+        label={"type": "movie", "metaId": "tt7654321", "name": "Complete Film"},
+        wantedFile="Complete.Film.mkv",
+        state="seeding",
+        progress=1.0,
+        files=[{"index": 0, "name": "Complete.Film.mkv", "size": 1_000_000_000,
+                "downloaded": 1_000_000_000, "progress": 1.0, "wanted": True}],
+    )
+    assert am.playable_index(e) == 0
+    streams = am.streams_for_meta_id({"entries": [e]}, "tt7654321", ORIGIN)
+    assert len(streams) == 1
+    assert streams[0]["url"].endswith("/0")

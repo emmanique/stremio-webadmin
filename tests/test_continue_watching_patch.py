@@ -176,3 +176,21 @@ def test_external_subtitle_resume_query_is_idempotent():
     twice, count = _MOD.patch_external_subtitle_resume_query(once)
     assert count == 0
     assert twice == once
+
+def test_resume_patches_keep_hls_server_offset_and_html5_resume_independent():
+    """HLS consumes Core time server-side; HTML5/direct re-applies Core time after metadata."""
+    html5 = 's.autoplay="boolean"!=typeof i.autoplay||i.autoplay,s.currentTime=null!==i.time&&isFinite(i.time)?parseInt(i.time,10)/1e3:0,'
+    hls = (
+        'var A=this,u=null,O=!1,d=[],N=null,R=new i,c=!1,m={stream:!1,videoParams:!1};'
+        'function L(e,t,a){R.emit(e,t,p(t,a))}'
+        'l.dispatch({type:"command",commandName:"load",commandArgs:Object.assign({},i,{stream:t.stream})})'
+        'case"unload":return u=null,O=!1,d=[],N=null,D("stream"),D("videoParams"),!1;'
+    )
+    patched, n = _MOD.patch_hls_resume_timeline(hls + html5)
+    assert n == 1
+    patched, n = _MOD.patch_initial_resume(patched)
+    assert n == 1
+    assert 'time:__stremioHlsResumeOffset>0?0:i.time' in patched
+    assert 's.__stremioResumeTime=' in patched
+    # HLS hands zero to HTML5, so the HTML5 canplay repair cannot double-apply the HLS offset.
+    assert '__stremioHlsResumeOffset>0?0:i.time' in patched

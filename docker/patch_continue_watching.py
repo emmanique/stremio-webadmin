@@ -163,7 +163,11 @@ def main() -> int:
     patched, hls_resume_count = patch_hls_resume_query(patched)
     patched, hls_timeline_count = patch_hls_resume_timeline(patched)
     patched, external_sub_count = patch_external_subtitle_resume_query(patched)
-    resume_count = 0
+    # HTML5/direct players may receive Core resume time before media metadata is ready.
+    # Re-apply that same Core time after canplay. HLS remains isolated: its Core time is
+    # consumed server-side by startTime and patch_hls_resume_timeline passes time=0 to
+    # the HTML5 player, so this cannot apply the HLS offset twice.
+    patched, resume_count = patch_initial_resume(patched)
     if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or resume_count:
         path.write_text(patched, encoding="utf-8")
         print(
