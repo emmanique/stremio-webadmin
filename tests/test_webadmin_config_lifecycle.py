@@ -121,9 +121,11 @@ def test_restart_reloads_saved_configuration_and_waits_for_health(tmp_path, monk
     monkeypatch.setattr(app, "_wait_for_server", lambda container=None, timeout=60.0: (True, ""))
     monkeypatch.setattr(app, "audit", lambda *args, **kwargs: None)
 
-    result = app.restart()
+    assert app.RESTART_LOCK.acquire(blocking=False)
+    app._restart_worker()
 
-    assert result["ok"] is True
+    result = app.restart_status()
+    assert result["status"] == "succeeded"
     assert result["startedAtBefore"] == "before"
     assert result["startedAtAfter"] == "after"
     assert container.restarts == 1
@@ -181,10 +183,12 @@ def test_restart_verifies_persisted_configuration_after_health(tmp_path, monkeyp
     monkeypatch.setattr(app, "_wait_for_server", lambda container=None, timeout=60.0: (True, ""))
     monkeypatch.setattr(app, "audit", lambda *args, **kwargs: None)
 
-    result = app.restart()
+    assert app.RESTART_LOCK.acquire(blocking=False)
+    app._restart_worker()
 
-    assert result["ok"] is True
-    assert result["configurationVerified"] is True
+    result = app.restart_status()
+    assert result["status"] == "succeeded"
+    assert result["detail"] == "server restarted and configuration reloaded"
     assert container.restarts == 1
 
 

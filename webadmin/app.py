@@ -38,6 +38,8 @@ IMAGE = os.getenv("STREMIO_IMAGE", "stremio-webadmin:local")
 UPDATE_LOCK = threading.Lock()
 CONFIG_LOCK = threading.RLock()
 RESTART_LOCK = threading.Lock()
+RESTART_STATE_LOCK = threading.Lock()
+RESTART_STATE = {"status": "idle", "detail": "", "startedAtBefore": None, "startedAtAfter": None}
 
 DESCRIPTIONS = {
     "http_port": "Porta HTTP interna da API do servidor Stremio.",
@@ -581,64 +583,81 @@ def _wait_for_server(container=None, timeout: float = 60.0) -> tuple[bool, str]:
     return False, last_error
 
 
-@app.post("/api/restart", status_code=202)
-def restart():
-    if not RESTART_LOCK.acquire(blocking=False):
-        raise HTTPException(409, "server restart already in progress")
-    try:
-        if CONFIG.exists():
-            try:
-                data = json.loads(CONFIG.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise HTTPException(500, f"saved configuration is unreadable: {exc}")
-            if not isinstance(data, dict):
-                raise HTTPException(500, "saved configuration is not a JSON object")
+def _set_restart_state(**values):
+    with RESTART_STATE_LOCK:
+        RESTART_STATE.update(values)
 
+
+def _restart_worker():
+    before = None
+    after = None
+    try:
         container = client().containers.get(CONTAINER)
         container.reload()
         before = container.attrs.get("State", {}).get("StartedAt")
+        _set_restart_state(status="running", detail="", startedAtBefore=before, startedAtAfter=None)
         container.restart(timeout=20)
         container.reload()
         after = container.attrs.get("State", {}).get("StartedAt")
 
         if before and after and before == after:
-            audit("server.restart.failed", "container start timestamp did not change")
-            raise HTTPException(500, "server restart was requested but the container did not restart")
+            raise RuntimeError("server restart was requested but the container did not restart")
 
         healthy, detail = _wait_for_server(container=container)
         if not healthy:
-            audit("server.restart.failed", detail)
-            raise HTTPException(503, f"server restarted but health validation failed: {detail}")
+            raise RuntimeError(f"server restarted but health validation failed: {detail}")
 
-        # A successful Docker restart is not enough: prove that the new
-        # process sees the exact persistent configuration before reporting OK.
         saved = read_config()
         if saved:
-            try:
-                _verify_server_config(saved)
-            except OSError as exc:
-                audit("server.restart.failed", f"configuration verification: {exc}")
-                raise HTTPException(
-                    500,
-                    f"server is healthy but did not reload the persisted configuration: {exc}",
-                ) from exc
+            _verify_server_config(saved)
 
         audit("server.restart", f"startedAt={after}")
-        return {
-            "ok": True,
-            "message": "server restarted and configuration reloaded",
-            "startedAtBefore": before,
-            "startedAtAfter": after,
-            "configurationFile": str(CONFIG),
-            "configurationVerified": True,
-        }
-    except HTTPException:
-        raise
+        _set_restart_state(
+            status="succeeded",
+            detail="server restarted and configuration reloaded",
+            startedAtBefore=before,
+            startedAtAfter=after,
+        )
     except Exception as exc:
         audit("server.restart.failed", str(exc))
-        raise HTTPException(500, str(exc))
+        _set_restart_state(
+            status="failed",
+            detail=str(exc),
+            startedAtBefore=before,
+            startedAtAfter=after,
+        )
     finally:
         RESTART_LOCK.release()
+
+
+@app.get("/api/restart")
+def restart_status():
+    with RESTART_STATE_LOCK:
+        return dict(RESTART_STATE)
+
+
+@app.post("/api/restart", status_code=202)
+def restart():
+    if not RESTART_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "server restart already in progress")
+
+    if CONFIG.exists():
+        try:
+            data = json.loads(CONFIG.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            RESTART_LOCK.release()
+            raise HTTPException(500, f"saved configuration is unreadable: {exc}") from exc
+        if not isinstance(data, dict):
+            RESTART_LOCK.release()
+            raise HTTPException(500, "saved configuration is not a JSON object")
+
+    _set_restart_state(status="accepted", detail="", startedAtBefore=None, startedAtAfter=None)
+    threading.Thread(target=_restart_worker, daemon=True).start()
+    return {
+        "ok": True,
+        "accepted": True,
+        "message": "server restart accepted",
+    }
 
 
 def update_worker():

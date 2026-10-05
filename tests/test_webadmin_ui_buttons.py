@@ -57,7 +57,7 @@ def test_configuration_button_actions_execute_real_frontend_handlers(tmp_path: P
     script = _inline_script()
     functions = "\n".join(
         _function(script, name)
-        for name in ("restartServer", "saveAllConfiguration", "restartFromConfiguration")
+        for name in ("waitForRestart", "restartServer", "saveAllConfiguration", "restartFromConfiguration")
     )
     node = tmp_path / "ui-actions-test.cjs"
     node.write_text(
@@ -91,8 +91,11 @@ global.fetch = async (url, options={{}}) => {{
   if (url === 'api/config') {{
     return {{ok:true,status:200,json:async()=>({{ok:true,restartRequired:false}})}};
   }}
+  if (url === 'api/restart' && options.method === 'POST') {{
+    return {{ok:true,status:202,json:async()=>({{ok:true,accepted:true}})}};
+  }}
   if (url === 'api/restart') {{
-    return {{ok:true,status:202,json:async()=>({{ok:true,configurationVerified:true}})}};
+    return {{ok:true,status:200,json:async()=>({{status:'succeeded',detail:'server restarted and configuration reloaded'}})}};
   }}
   if (url === 'api/status') {{
     return {{ok:true,status:200,json:async()=>({{server:{{healthy:true}}}})}};
