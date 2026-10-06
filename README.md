@@ -1,4 +1,4 @@
-# Stremio Server WebAdmin 3.0.10-dev
+# Stremio Server WebAdmin 3.0.10
 
 
 Self-hosted Stremio streaming platform with Stremio/libtorrent server, WebAdmin, Pi-hole, optional Gluetun/OpenVPN routing and hardware transcoding support.
@@ -7,8 +7,8 @@ Current versions:
 
 | Component | Version |
 | --- | --- |
-| Fork / Platform | 3.0.10-dev |
-| WebAdmin | 3.0.10-dev |
+| Fork / Platform | 3.0.10 |
+| WebAdmin | 3.0.10 |
 | VPN Gateway image | `3.0.6` coordinated release tag |
 | Upstream Server/Core | 1.6.27 |
 
