@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Validate release contract
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < FORK_VERSION)"
+          test -n "$VERSION"
+          case "$VERSION" in *-dev*) echo "Stable release cannot use -dev version"; exit 1;; esac
+          if [ "$GITHUB_REF_TYPE" = tag ]; then test "$GITHUB_REF_NAME" = "v$VERSION"; fi
+          test "$(tr -d '[:space:]' < webadmin/WEBADMIN_VERSION)" = "$VERSION"
+      - name: Run regression suite
+        run: |
+          uv sync --dev
+          .venv/bin/python -m pytest -q
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < FORK_VERSION)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Login GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish stable images
+        shell: bash
+        run: |
+          docker build -t "ghcr.io/emmanique/stremio-server:$VERSION" -t "ghcr.io/emmanique/stremio-server:latest" .
+          docker build -t "ghcr.io/emmanique/stremio-webadmin:$VERSION" -t "ghcr.io/emmanique/stremio-webadmin:latest" ./webadmin
+          docker build -t "ghcr.io/emmanique/stremio-vpn:$VERSION" -t "ghcr.io/emmanique/stremio-vpn:latest" ./vpn
+          for image in stremio-server stremio-webadmin stremio-vpn; do
+            docker push "ghcr.io/emmanique/$image:$VERSION"
+            docker push "ghcr.io/emmanique/$image:latest"
+          done
