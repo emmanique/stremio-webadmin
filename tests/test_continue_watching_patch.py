@@ -196,24 +196,6 @@ def test_resume_patches_keep_hls_server_offset_and_html5_resume_independent():
     assert '__stremioHlsResumeOffset>0?0:i.time' in patched
 
 
-def test_player_load_reacts_to_fresh_library_resume_state():
-    source = ('Ue.load({time:De.libraryItem.state.timeOffset})'
-              '},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time')
-    patched, count = _MOD.patch_player_library_resume_dependency(source)
-    assert count == 1
-    assert '[De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze]' in patched
-    assert 'Ue.load({time:De.libraryItem.state.timeOffset})' in patched
-
-
-def test_player_library_resume_dependency_is_idempotent():
-    source = ('x},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time')
-    once, count = _MOD.patch_player_library_resume_dependency(source)
-    assert count == 1
-    twice, count = _MOD.patch_player_library_resume_dependency(once)
-    assert count == 0
-    assert twice == once
-
-
 def test_hls_autoplay_retries_after_manifest_parsed():
     source = 'I.loadSource(O.url),I.attachMedia(s)'
     patched, count = _MOD.patch_hls_autoplay_after_attach(source)
@@ -227,21 +209,5 @@ def test_hls_autoplay_retry_is_idempotent():
     once, count = _MOD.patch_hls_autoplay_after_attach(source)
     assert count == 1
     twice, count = _MOD.patch_hls_autoplay_after_attach(once)
-    assert count == 0
-    assert twice == once
-
-
-def test_player_waits_for_library_before_starting_selected_stream():
-    source = 'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&Ue.load({'
-    patched, count = _MOD.patch_player_wait_for_library_resume(source)
-    assert count == 1
-    assert '__stremioLibraryReadyForLoad' in patched
-    assert 'null!==De.libraryItem||null===De.selected.streamRequest||null===De.selected.streamRequest.path' in patched
-
-def test_player_library_wait_is_idempotent():
-    source = 'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&Ue.load({'
-    once, count = _MOD.patch_player_wait_for_library_resume(source)
-    assert count == 1
-    twice, count = _MOD.patch_player_wait_for_library_resume(once)
     assert count == 0
     assert twice == once

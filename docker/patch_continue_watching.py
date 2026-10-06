@@ -59,7 +59,7 @@ def patch_player_unload(text: str) -> tuple[str, int]:
 
 def patch_hls_resume_timeline(text: str) -> tuple[str, int]:
     """Keep Core time global while an HLS transcode starts at a server-side offset."""
-    marker = "__stremioHlsResumeOffset"
+    marker = '__stremioHlsResumeOffset=0;function L(e,t,a)'
     if marker in text:
         return text, 0
 
@@ -128,50 +128,51 @@ def patch_hls_resume_query(text: str) -> tuple[str, int]:
         return text, 0
     return text.replace(needle, replacement), 1
 
-
-def patch_player_wait_for_library_resume(text: str) -> tuple[str, int]:
-    """Do not launch a zero-offset HLS job while Core is still loading Library state."""
-    marker = '__stremioLibraryReadyForLoad'
+def patch_hls_core_duration(text: str) -> tuple[str, int]:
+    """Report the source duration to Core while an offset HLS EVENT playlist is still growing."""
+    marker = "__stremioHlsSourceDuration"
     if marker in text:
         return text, 0
-    needle = 'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&Ue.load({'
-    replacement = (
-        'De.selected&&"Ready"===(null===(e=De.stream)||void 0===e?void 0:e.type)&&'
-        '"Loading"!==(null===(t=Me.settings)||void 0===t?void 0:t.type)&&'
-        '(__stremioLibraryReadyForLoad=null!==De.libraryItem||null===De.selected.streamRequest||'
-        'null===De.selected.streamRequest.path,__stremioLibraryReadyForLoad)&&Ue.load({'
+
+    state_old = 'm={stream:!1,videoParams:!1},__stremioHlsResumeOffset=0;function L(e,t,a){'
+    state_new = 'm={stream:!1,videoParams:!1},__stremioHlsResumeOffset=0,__stremioHlsSourceDuration=0;function L(e,t,a){'
+    if text.count(state_old) != 1:
+        return text, 0
+    text = text.replace(state_old, state_new)
+
+    duration_old = '"duration"===t&&"number"==typeof a&&(__stremioHlsResumeOffset>0&&(a+=__stremioHlsResumeOffset)),'
+    duration_new = '"duration"===t&&"number"==typeof a&&(window.__stremioHlsSourceDuration>0?a=window.__stremioHlsSourceDuration:__stremioHlsResumeOffset>0&&(a+=__stremioHlsResumeOffset)),'
+    if text.count(duration_old) != 1:
+        return text, 0
+    text = text.replace(duration_old, duration_new)
+
+    load_old = '__stremioHlsResumeOffset=t.stream&&"string"==typeof t.stream.url&&-1!==t.stream.url.indexOf("/hlsv2/")&&"number"==typeof i.time&&isFinite(i.time)&&i.time>0?Math.round(i.time):0,'
+    load_new = (
+        '__stremioHlsResumeOffset=t.stream&&"string"==typeof t.stream.url&&-1!==t.stream.url.indexOf("/hlsv2/")&&'
+        '"number"==typeof i.time&&isFinite(i.time)&&i.time>0?Math.round(i.time):0,'
+        'window.__stremioHlsSourceDuration=0,__stremioHlsSourceDuration=0,t.stream&&"string"==typeof t.stream.url&&'
+        'function(){try{var e=new URL(t.stream.url,window.location.href),a=Number(e.searchParams.get("sourceDuration"));'
+        'isFinite(a)&&a>0&&(window.__stremioHlsSourceDuration=a)}catch(e){}}(),'
     )
-    if text.count(needle) != 1:
+    if text.count(load_old) != 1:
         return text, 0
-    return text.replace(needle, replacement), 1
+    text = text.replace(load_old, load_new)
 
-
-def patch_player_library_resume_dependency(text: str) -> tuple[str, int]:
-    """Reload playback when the selected video's Library resume state changes.
-
-    Stremio Web's player load effect reads De.libraryItem.state.timeOffset but does not
-    subscribe to De.libraryItem.  After a stop/reopen in the same SPA session this can
-    therefore launch once with stale time=0; a browser refresh works because it rebuilds
-    the model.  Add the Library item to the effect dependency list so the canonical Core
-    state can trigger the load again without inventing a second resume store.
-    """
-    marker = 'De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze'
-    if marker in text:
+    unload_old = 'N=null,__stremioHlsResumeOffset=0,D("stream")'
+    unload_new = 'N=null,__stremioHlsResumeOffset=0,__stremioHlsSourceDuration=0,window.__stremioHlsSourceDuration=0,D("stream")'
+    if text.count(unload_old) != 1:
         return text, 0
-    needle = '},[Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time'
-    replacement = '},[De.libraryItem,Me.baseUrl,De.selected,De.stream,Gt,ce,ze]),S.useEffect(function(){var e;!He&&Pe(Ue.state.time'
-    if text.count(needle) != 1:
-        return text, 0
-    return text.replace(needle, replacement), 1
+    return text.replace(unload_old, unload_new), 1
+
 
 def patch_hls_autoplay_after_attach(text: str) -> tuple[str, int]:
     """Retry autoplay after hls.js has attached media and parsed the resumed manifest."""
-    marker = 'Events.MANIFEST_PARSED,function(){i.autoplay&&!s.paused||s.play().catch(function(){})}'
+    marker = 'sourceDuration"));isFinite(a)&&a>0&&(window.__stremioHlsSourceDuration=a)'
     if marker in text:
         return text, 0
     needle = 'I.loadSource(O.url),I.attachMedia(s)'
     replacement = (
-        'I.on(o.Events.MANIFEST_PARSED,function(){i.autoplay&&!s.paused||s.play().catch(function(){})}),'
+        'I.on(o.Events.MANIFEST_PARSED,function(){try{var e=I.levels&&I.levels[0]&&I.levels[0].url,t=Array.isArray(e)?e[0]:e;if("string"==typeof t){var a=Number(new URL(t,window.location.href).searchParams.get("sourceDuration"));isFinite(a)&&a>0&&(window.__stremioHlsSourceDuration=a)}}catch(e){}i.autoplay&&!s.paused||s.play().catch(function(){})}),'
         'I.loadSource(O.url),I.attachMedia(s)'
     )
     # Only the primary HTMLVideo+hls.js implementation has this exact minified sequence.
@@ -215,15 +216,12 @@ def main() -> int:
     patched, hls_resume_count = patch_hls_resume_query(patched)
     patched, hls_timeline_count = patch_hls_resume_timeline(patched)
     patched, external_sub_count = patch_external_subtitle_resume_query(patched)
-    patched, library_wait_count = patch_player_wait_for_library_resume(patched)
-    patched, library_resume_count = patch_player_library_resume_dependency(patched)
+    # Apply the Core-duration patch before autoplay: the autoplay patch also contains
+    # the shared duration symbol, which must not trip core-duration's idempotency marker.
+    patched, hls_core_duration_count = patch_hls_core_duration(patched)
     patched, hls_autoplay_count = patch_hls_autoplay_after_attach(patched)
-    # HTML5/direct players may receive Core resume time before media metadata is ready.
-    # Re-apply that same Core time after canplay. HLS remains isolated: its Core time is
-    # consumed server-side by startTime and patch_hls_resume_timeline passes time=0 to
-    # the HTML5 player, so this cannot apply the HLS offset twice.
-    patched, resume_count = patch_initial_resume(patched)
-    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or library_wait_count or library_resume_count or hls_autoplay_count or resume_count:
+    resume_count = 0
+    if status == 1 or unload_count or hls_resume_count or hls_timeline_count or external_sub_count or hls_autoplay_count or hls_core_duration_count or resume_count:
         path.write_text(patched, encoding="utf-8")
         print(
             "[web-player] Continue Watching centre Play uses Core player "

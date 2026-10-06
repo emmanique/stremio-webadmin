@@ -264,5 +264,5 @@ def test_browsers_revalidate_the_loader_on_every_load():
     matching = [ln for ln in regex_lines
                 if re.search(re.match(r'\s*location\s+~\*?\s*"?([^"\s]+)"?', ln).group(1), path)]
     assert matching, "no regex location serves the loader"
-    assert 'add_header Cache-Control "no-cache"' in matching[0]
+    assert 'add_header Cache-Control "no-cache, no-store, must-revalidate"' in matching[0]
     assert "proxy_pass" not in matching[0]

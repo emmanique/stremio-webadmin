@@ -64,7 +64,10 @@ location ^~ /library           { proxy_pass http://127.0.0.1:11470; }
 # unmatched path lands on the one fixed route below, so none can reach an origin-only route.
 # Web Player loader changes between releases and must not remain
 # indefinitely cached by the browser/service worker.
-location ~ "^/[0-9a-fA-F]{40}/scripts/loader\.js$" { add_header Cache-Control "no-cache"; }
+location = /index.html { add_header Cache-Control "no-cache, no-store, must-revalidate" always; expires -1; }
+location = /service-worker.js { add_header Cache-Control "no-cache, no-store, must-revalidate" always; expires -1; }
+location ~ "^/[0-9a-fA-F]{40}/scripts/loader\.js$" { add_header Cache-Control "no-cache, no-store, must-revalidate" always; expires -1; }
+location ~ "^/[0-9a-fA-F]{40}/scripts/main\.js$" { add_header Cache-Control "no-cache, must-revalidate" always; expires -1; }
 
 location / { try_files $uri $uri/ @unmatched; }
 location @unmatched {

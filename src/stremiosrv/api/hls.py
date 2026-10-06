@@ -273,6 +273,18 @@ def master(
     except OSError as e:
         raise HTTPException(status_code=500, detail="failed to read master playlist") from e
     body = _master_with_subtitles(master_text, pr, mediaURL, dec["_startTimeMs"])
+    # The EVENT media playlist grows while FFmpeg is transcoding. Expose the immutable source
+    # duration on variant URLs so the Web Player can report the real movie duration to Core
+    # without treating the currently generated HLS window as the end of the title.
+    source_duration_ms = max(0, round(float((pr.get("format") or {}).get("duration") or 0.0) * 1000))
+    if source_duration_ms:
+        lines = []
+        for line in body.splitlines():
+            if line and not line.startswith("#") and ".m3u8" in line:
+                sep = "&" if "?" in line else "?"
+                line = f"{line}{sep}sourceDuration={source_duration_ms}"
+            lines.append(line)
+        body = "\n".join(lines) + ("\n" if body.endswith("\n") else "")
     tracks = _subtitle_streams(pr)
     logger.debug(
         "subtitle trace: stage=master method=%s tracks=%s advertised=%s",
