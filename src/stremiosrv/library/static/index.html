@@ -448,10 +448,18 @@ const LIB = (() => {
     return `<div class="kids">${kidsInOrder(kids).map(k => {
       const text = shortFile(k.name) + ' ' + fmt(k.size)
         + (k.progress < 1 ? ' \\u00b7 ' + Math.round(k.progress * 100) + '%' : '');
+      const label = e.label || {};
+      const metaId = label.metaId || '';
+      const type = label.type || '';
+      const videoId = coreVideoId(metaId, type, label.videoId || '');
+      const ctx = playbackContext(metaId, type, videoId, k.infoHash);
       const watch = k.infoHash && Number.isInteger(k.fileIdx)
         ? `<button class="kidwatch" data-watch="${esc(k.infoHash)}"
              data-fileidx="${k.fileIdx}" data-filename="${esc(k.name || '')}"
-             data-watchname="${esc(shortFile(k.name) || k.name || '')}"
+             data-watchname="${esc(shortFile(k.name) || k.name || '')}"${
+             ctx ? ` data-type="${esc(ctx.type)}" data-metaid="${esc(ctx.metaId)}"
+               data-videoid="${esc(ctx.videoId)}" data-streamtransport="${esc(ctx.streamTransportUrl)}"
+               data-metatransport="${esc(ctx.metaTransportUrl)}"` : ''}
              title="Watch in Stremio player">Watch</button>`
         : '';
       return `<div class="kid${k.wanted ? '' : ' dim'}" title="${esc(k.name)}"><span>${
@@ -489,9 +497,18 @@ const LIB = (() => {
     const idx = file && Number.isInteger(file.index) ? file.index
               : file && Number.isInteger(file.fileIdx) ? file.fileIdx : null;
     const filename = (file && file.name) || e.wantedFile || e.name || '';
+    const label = e.label || {};
+    const metaId = label.metaId || '';
+    const type = label.type || '';
+    const videoId = coreVideoId(metaId, type, label.videoId || '');
+    const ctx = playbackContext(metaId, type, videoId, e.infoHash);
     return `<button class="dl watch" data-watch="${esc(e.infoHash)}"${
       idx == null ? '' : ` data-fileidx="${idx}"`
-    } data-filename="${esc(filename)}" data-watchname="${esc(title)}">Watch</button>`;
+    } data-filename="${esc(filename)}" data-watchname="${esc(title)}"${
+      ctx ? ` data-type="${esc(ctx.type)}" data-metaid="${esc(ctx.metaId)}"
+        data-videoid="${esc(ctx.videoId)}" data-streamtransport="${esc(ctx.streamTransportUrl)}"
+        data-metatransport="${esc(ctx.metaTransportUrl)}"` : ''
+    }>Watch</button>`;
   };
 
   const cardHtml = e => {
@@ -639,6 +656,11 @@ const LIB = (() => {
               fileIdx: Number.isInteger(parsed) ? parsed : null,
               name: btn.dataset.watchname || btn.dataset.filename || null,
               filename: btn.dataset.filename || null,
+              type: btn.dataset.type || null,
+              metaId: btn.dataset.metaid || null,
+              videoId: btn.dataset.videoid || null,
+              streamTransportUrl: btn.dataset.streamtransport || null,
+              metaTransportUrl: btn.dataset.metatransport || null,
             }) });
           window.location.assign(out.url);
         } catch (e) {
@@ -709,6 +731,43 @@ const LIB = (() => {
   // one browser and empty in another, purely because they were reading different libraries.
   // Local wins on conflict -- it is the fresher record on the device that made it.
   const storedLibrary = () => Object.assign({}, remoteLibrary || {}, localLibrary());
+
+
+  // Playback identity is logical content identity, never torrent identity. Prefer the exact
+  // video_id Core persisted; a series without one stays unresolved rather than guessing an episode.
+  const coreVideoId = (metaId, type, explicit) => {
+    if (explicit) return explicit;
+    const item = storedLibrary()[metaId] || {};
+    const st = item.state || {};
+    if (st.video_id) return st.video_id;
+    return type === 'movie' ? metaId : null;
+  };
+
+  const metaTransportFor = type => {
+    const a = metaAddons(type)[0];
+    return a && a.transportUrl ? a.transportUrl : null;
+  };
+
+  // The local streams bucket is the factual record of the transport Core used for this video.
+  // It is device-local, so absence means pathless playback, never a guessed transport.
+  const playbackContext = (metaId, type, explicitVideoId, infoHash) => {
+    const videoId = coreVideoId(metaId, type, explicitVideoId);
+    if (!metaId || !type || !videoId) return null;
+    const ih = String(infoHash || '').toLowerCase();
+    const hit = storedStreams().find(x => {
+      if (!x || x.metaId !== metaId || x.videoId !== videoId) return false;
+      const sh = String((x.stream && x.stream.infoHash) || '').toLowerCase();
+      return !ih || !sh || sh === ih;
+    });
+    if (!hit) return null;
+    const streamTransportUrl = hit.streamTransportUrl
+      || (hit.streamRequest && hit.streamRequest.base) || hit.transportUrl || null;
+    const metaTransportUrl = hit.metaTransportUrl
+      || (hit.metaRequest && hit.metaRequest.base) || metaTransportFor(type);
+    return streamTransportUrl && metaTransportUrl
+      ? { type, metaId, videoId, streamTransportUrl, metaTransportUrl }
+      : null;
+  };
 
   // Fetched once per sign-in, only for what this device is actually missing.
   async function loadStremioData() {
@@ -1090,8 +1149,21 @@ const LIB = (() => {
   const watchedAt = i => ts(wstate(i).lastWatched) || ts(i._mtime);
 
   function renderContinue(counts) {
-    const items = Object.values(storedLibrary())
-      .filter(i => i && i._id && (i.temp || !i.removed) && inProgress(i))
+    const allLibraryItems = Object.values(storedLibrary()).filter(i => i && i._id);
+    const debugItems = allLibraryItems.map(i => ({
+      id: i._id, name: i.name, temp: i.temp, removed: i.removed,
+      timeOffset: Number(wstate(i).timeOffset || 0),
+      flaggedWatched: wstate(i).flaggedWatched,
+      video_id: wstate(i).video_id,
+      lastWatched: wstate(i).lastWatched
+    }));
+    console.debug('[continue-watching-state]', debugItems);
+    api('/library/api/debug/continue-state', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: debugItems })
+    }).catch(() => {});
+    const items = allLibraryItems
+      .filter(i => (i.temp || !i.removed) && inProgress(i))
       // Date.parse is stricter in some browsers than others; an unparsed stamp must sort last,
       // not poison the comparator with NaN.
       .sort((a, b) => watchedAt(b) - watchedAt(a))

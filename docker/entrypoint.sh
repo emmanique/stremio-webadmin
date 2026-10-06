@@ -90,6 +90,28 @@ export SERVER_URL
 # stream picker. If Core has no player deep link, normal source selection remains unchanged.
 python3 /srv/app/docker/patch_continue_watching.py || true
 
+# The patch above mutates the hashed Web Player main.js at container start. Update its
+# service-worker precache revision to the bytes actually being served; otherwise Chrome can keep
+# the pre-patch main.js until a hard refresh even though nginx itself is serving the new file.
+WEB_BUILD=/srv/stremio-server/build
+set -- "$WEB_BUILD"/*/scripts/main.js
+if [ "$#" -eq 1 ] && [ -f "$1" ] && [ -f "$WEB_BUILD/service-worker.js" ]; then
+    MAIN_JS="$1"
+    MAIN_REL="${MAIN_JS#"$WEB_BUILD"/}"
+    MAIN_REV=$(md5sum "$MAIN_JS" | cut -d' ' -f1)
+    python3 - "$WEB_BUILD/service-worker.js" "$MAIN_REL" "$MAIN_REV" <<'PY_SW'
+import re, sys
+path, rel, rev = sys.argv[1:]
+text = open(path, encoding="utf-8").read()
+pattern = r'{url:"' + re.escape(rel) + r'",revision:"[0-9a-f]*"}'
+updated, count = re.subn(pattern, '{url:"%s",revision:"%s"}' % (rel, rev), text)
+if count != 1:
+    raise SystemExit("expected one service-worker main.js precache entry, found %d" % count)
+open(path, "w", encoding="utf-8").write(updated)
+print("[web-player] service worker main.js revision -> " + rev)
+PY_SW
+fi
+
 # 3) Run uvicorn (API, internal :11470) + nginx (web player + API proxy on :8080 and :12470).
 mkdir -p /tmp/nx-proxy /tmp/nx-body
 # Render the cert path into the nginx config (honors a custom STREMIOSRV_CACHE_ROOT).

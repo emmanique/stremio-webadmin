@@ -55,6 +55,10 @@ class SessionBody(BaseModel):
     authKey: str
 
 
+class ContinueDebugBody(BaseModel):
+    items: list[dict] = []
+
+
 class LoginBody(BaseModel):
     email: str
     password: str
@@ -81,6 +85,13 @@ class PlayerLinkBody(BaseModel):
     fileIdx: int | None = None
     name: str | None = None
     filename: str | None = None
+    # Optional Core identity.  When present, build the same complete Player route used by
+    # Stremio's normal source flow so Library resume can match state.video_id strictly.
+    streamTransportUrl: str | None = None
+    metaTransportUrl: str | None = None
+    type: str | None = None
+    metaId: str | None = None
+    videoId: str | None = None
 
 
 def _settings(request: Request):
@@ -323,6 +334,21 @@ def destroy_session(request: Request, response: Response) -> dict:
     return {"ok": True}
 
 
+
+
+@router.post("/api/debug/continue-state", dependencies=[Depends(require_session)])
+def debug_continue_state(body: ContinueDebugBody) -> dict:
+    """Temporary DEV diagnostic: log only playback-state fields, never auth/session data."""
+    for item in body.items[:50]:
+        log.warning(
+            "continue-state id=%s name=%s timeOffset=%s flaggedWatched=%s video_id=%s lastWatched=%s temp=%s removed=%s",
+            item.get("id"), item.get("name"), item.get("timeOffset"),
+            item.get("flaggedWatched"), item.get("video_id"), item.get("lastWatched"),
+            item.get("temp"), item.get("removed"),
+        )
+    return {"ok": True}
+
+
 @router.get("/api/state", dependencies=[Depends(require_session)])
 def state(request: Request) -> dict:
     s = _settings(request)
@@ -368,7 +394,15 @@ def _player_link(body: PlayerLinkBody) -> str:
 
     raw = json.dumps(stream, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     token = base64.b64encode(zlib.compress(raw, level=0)).decode("ascii")
-    return "/#/player/" + quote(token, safe="")
+    route = "/#/player/" + quote(token, safe="")
+
+    # A complete route is atomic: never emit a half-identified Player context.  The five route
+    # fields are exactly what Stremio Web uses to construct streamRequest/metaRequest and therefore
+    # to compare Library state.video_id before applying timeOffset.
+    identity = (body.streamTransportUrl, body.metaTransportUrl, body.type, body.metaId, body.videoId)
+    if all(isinstance(v, str) and v for v in identity):
+        route += "/" + "/".join(quote(v, safe="") for v in identity)
+    return route
 
 
 @router.post("/api/player-link", dependencies=[Depends(require_session)])
