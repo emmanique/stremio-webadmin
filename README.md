@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎬 Stremio Server WebAdmin
+# Stremio Server WebAdmin 3.0.11
 
 ### Self-hosted Stremio streaming with WebAdmin, GPU transcoding, VPN, Pi-hole and Library management
 
