@@ -85,8 +85,9 @@
         <div class="glConfigItem"><span>VPN provider mode</span><b id="glCfgProvider">—</b></div>
         <div class="glConfigItem"><span>VPN type</span><b id="glCfgType">—</b></div>
         <div class="glConfigItem"><span>Firewall / kill switch</span><b id="glCfgFirewall">—</b></div>
-        <div class="glConfigItem"><span>Firewall input ports</span><code id="glCfgInputPorts">—</code></div>
+        <div class="glConfigItem"><span>Namespace input ports</span><code id="glCfgInputPorts">—</code></div>
         <div class="glConfigItem full"><span>Allowed LAN CIDRs outside VPN</span><code id="glCfgCidrs">—</code></div>
+        <div class="glConfigItem full"><span>Input scope</span><code id="glCfgInputScope">—</code></div>
         <div class="glConfigItem"><span>DNS service</span><b id="glCfgDnsServer">—</b></div>
         <div class="glConfigItem"><span>DNS listen address</span><code id="glCfgDnsAddress">—</code></div>
         <div class="glConfigItem"><span>DNS upstream transport</span><b id="glCfgDnsType">—</b></div>
@@ -193,6 +194,7 @@
     $('glCfgType').textContent = cfg.vpnType || '—';
     $('glCfgFirewall').innerHTML = badge(!!cfg.firewallEnabled, cfg.firewallEnabled ? 'ON' : 'OFF');
     $('glCfgInputPorts').textContent = cfg.firewallInputPorts || '—';
+    $('glCfgInputScope').textContent = cfg.firewallInputScope || '—';
     $('glCfgCidrs').textContent = cfg.firewallOutboundSubnets || '—';
     $('glCfgDnsServer').innerHTML = badge(!!cfg.dnsServerEnabled, cfg.dnsServerEnabled ? 'ON' : 'OFF');
     $('glCfgDnsAddress').textContent = cfg.dnsAddress || '—';

@@ -29,7 +29,7 @@ services:
       # its internal DNS resolver is available. Hostname targets create a DNS
       # bootstrap cycle with Pi-hole -> gluetun:1053 -> Gluetun DNS.
       HEALTH_TARGET_ADDRESSES: "${VPN_HEALTH_TARGET_ADDRESSES:-1.1.1.1:443,1.0.0.1:443}"
-      FIREWALL_INPUT_PORTS: "1053,${STREMIOSRV_BT_LISTEN_PORT:-6881},8000,8080,11470,12470"
+      FIREWALL_INPUT_PORTS: "1053,${STREMIOSRV_BT_LISTEN_PORT:-6881},8080,11470,12470"
       FIREWALL_OUTBOUND_SUBNETS: "${VPN_LAN_CIDRS:-192.168.0.0/16,172.30.0.0/24}"
       HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: "{\"auth\":\"none\"}"
     ports:

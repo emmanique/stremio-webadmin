@@ -144,6 +144,7 @@ def _safe_config(gluetun, profile: dict[str, object]) -> dict[str, object]:
         "timezone": env.get("TZ", ""),
         "firewallEnabled": firewall,
         "firewallInputPorts": env.get("FIREWALL_INPUT_PORTS", ""),
+        "firewallInputScope": "shared Gluetun/Stremio namespace; Docker publishes only explicitly mapped host-LAN ports",
         "firewallOutboundSubnets": _effective_outbound_subnets(env, profile),
         "dnsServerEnabled": dns_server,
         "dnsAddress": env.get("DNS_ADDRESS", "127.0.0.1"),
