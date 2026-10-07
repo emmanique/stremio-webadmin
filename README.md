@@ -1,10 +1,10 @@
 <div align="center">
 
-# Stremio Server WebAdmin 3.0.12
+# Stremio Server WebAdmin 3.0.13
 
 ### Self-hosted Stremio streaming with WebAdmin, GPU transcoding, VPN, Pi-hole and Library management
 
-[![Platform](https://img.shields.io/badge/platform-3.0.12-7c3aed)](docs/releases/v3.0.12.md)
+[![Platform](https://img.shields.io/badge/platform-3.0.13-7c3aed)](docs/releases/v3.0.13.md)
 [![Core](https://img.shields.io/badge/Stremio_Core-1.6.34-5b21b6)](SERVER_VERSION)
 ![Upstream](https://img.shields.io/badge/upstream-aligned-2563eb)
 ![Fork](https://img.shields.io/badge/fork-enhanced-7c3aed)
@@ -14,14 +14,14 @@
 
 **Run your own Stremio streaming backend with a browser-based administration interface, automatic hardware acceleration, optional VPN routing and integrated DNS filtering.**
 
-[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.12.md)
+[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.13.md)
 
 </div>
 
 ---
 
 <p align="center">
-  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.12 dashboard">
+  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.13 dashboard">
 </p>
 
 ## ✨ Highlights
@@ -33,7 +33,7 @@
 | ⚡ | **Automatic GPU transcoding** | AUTO discovery of Intel/DRM VAAPI and NVIDIA/NVENC, with CPU-safe fallback. |
 | 🌈 | **HDR-aware playback** | Validated HDR10/PQ/HLG → SDR VAAPI path when browser transcoding is required. |
 | 📚 | **My Library** | Cached media catalog, Pin/Keep workflow and integration with Stremio playback continuity. |
-| 🔐 | **Optional VPN** | Persistent Gluetun gateway that switches between DIRECT and VPN egress without changing the Stremio network namespace. |
+| 🔐 | **Optional VPN** | Persistent Gluetun gateway with CyberGhost OpenVPN plus Proton WireGuard/OpenVPN profiles and Proton NAT-PMP port forwarding. |
 | 🛡️ | **Pi-hole DNS** | Integrated DNS layer for Stremio, libtorrent and child processes. |
 | 📊 | **Runtime observability** | Active streams, peers, cache, FFmpeg/transcoding state and component versions. |
 | 🐳 | **Container-first deployment** | Coordinated Docker Compose topology with persistent configuration and release packages. |
@@ -57,7 +57,7 @@ It exposes operational status, active streams, configuration, component versions
 </tr>
 </table>
 
-The screenshots above are real views of WebAdmin 3.0.12. The current DEV baseline is validated against Stremio Core 1.6.34.
+The screenshots above show the WebAdmin interface used by the 3.0.x release line. The current DEV baseline is validated against Stremio Core 1.6.34.
 
 ## 🚀 What makes this fork different?
 
@@ -87,7 +87,7 @@ Embedded subtitle tracks can be exposed to HLS clients as WebVTT renditions usin
 
 ### VPN + DNS integration
 
-The Compose topology keeps Gluetun as a persistent network gateway. With VPN disabled the stack uses DIRECT egress; when VPN is enabled, the streaming traffic uses the configured tunnel with fail-closed protection.
+The Compose topology keeps Gluetun as a persistent network gateway. With VPN disabled the stack uses DIRECT egress; when VPN is enabled, the streaming traffic uses the configured tunnel with fail-closed protection. CyberGhost OpenVPN and Proton VPN (WireGuard/OpenVPN) profiles are supported. Proton NAT-PMP profiles can publish the provider-forwarded TCP/UDP BitTorrent port dynamically; while VPN is active, Core UPnP/NAT-PMP is disabled to avoid conflicting mappings.
 
 Pi-hole is the normal DNS layer for the streaming stack in both modes.
 
@@ -240,10 +240,10 @@ Preserve the existing `.env` and persistent volumes. **Do not use `docker compos
 
 | Component | Development baseline |
 |---|---:|
-| Fork / Platform | **3.0.12** |
-| WebAdmin | **3.0.12** |
+| Fork / Platform | **3.0.13** |
+| WebAdmin | **3.0.13** |
 | Upstream Server/Core | **1.6.34** |
-| VPN Gateway image | **3.0.10** |
+| VPN Gateway image | **3.0.13** |
 
 Versioning is intentionally independent: the platform/WebAdmin version identifies this fork, while the embedded Server/Core keeps its upstream-derived version.
 

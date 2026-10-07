@@ -82,10 +82,11 @@
 
     <article class="panel"><div class="title">GLUETUN CONFIGURATION</div><div class="inner">
       <div class="glConfig">
-        <div class="glConfigItem"><span>VPN provider mode</span><b id="glCfgProvider">—</b></div>
-        <div class="glConfigItem"><span>VPN type</span><b id="glCfgType">—</b></div>
+        <div class="glConfigItem"><span>Effective VPN provider</span><b id="glCfgProvider">—</b></div>
+        <div class="glConfigItem"><span>Effective VPN protocol</span><b id="glCfgType">—</b></div>
         <div class="glConfigItem"><span>Firewall / kill switch</span><b id="glCfgFirewall">—</b></div>
-        <div class="glConfigItem"><span>Namespace input ports</span><code id="glCfgInputPorts">—</code></div>
+        <div class="glConfigItem"><span>Fixed namespace / LAN ports</span><code id="glCfgInputPorts">—</code></div>
+        <div class="glConfigItem"><span>BitTorrent listener</span><code id="glCfgBtPort">—</code></div>
         <div class="glConfigItem full"><span>Allowed LAN CIDRs outside VPN</span><code id="glCfgCidrs">—</code></div>
         <div class="glConfigItem full"><span>Input scope</span><code id="glCfgInputScope">—</code></div>
         <div class="glConfigItem"><span>DNS service</span><b id="glCfgDnsServer">—</b></div>
@@ -190,10 +191,12 @@
     $('glRestart').disabled = !c.present || !c.running || !!data.busy;
     $('glStop').disabled = !c.present || !c.running || !!data.busy;
 
-    $('glCfgProvider').textContent = cfg.vpnServiceProvider || '—';
-    $('glCfgType').textContent = cfg.vpnType || '—';
+    $('glCfgProvider').textContent = v.status === 'running' ? (p.provider || cfg.vpnServiceProvider || '—') : 'DIRECT / no VPN tunnel';
+    $('glCfgType').textContent = v.status === 'running' ? (p.protocol || cfg.vpnType || '—') : '—';
     $('glCfgFirewall').innerHTML = badge(!!cfg.firewallEnabled, cfg.firewallEnabled ? 'ON' : 'OFF');
-    $('glCfgInputPorts').textContent = cfg.firewallInputPorts || '—';
+    $('glCfgInputPorts').textContent = String(cfg.firewallInputPorts || '').split(',').map(x => x.trim()).filter(x => x && x !== '6881').join(',') || '—';
+    const nc = data.netcheck || {};
+    $('glCfgBtPort').textContent = `${nc.listenPort || 6881} · ${String(nc.listenPortMode || (v.status === 'running' ? 'vpn' : 'direct')).toUpperCase()}`;
     $('glCfgInputScope').textContent = cfg.firewallInputScope || '—';
     $('glCfgCidrs').textContent = cfg.firewallOutboundSubnets || '—';
     $('glCfgDnsServer').innerHTML = badge(!!cfg.dnsServerEnabled, cfg.dnsServerEnabled ? 'ON' : 'OFF');

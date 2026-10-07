@@ -26,6 +26,9 @@ def test_netcheck_reports_engine_signals():
         def portmap_status(self):
             return {"mapped": True, "transport": "natpmp", "externalPort": 6881}
 
+        def upnp_enabled(self):
+            return True
+
     b = TestClient(create_app(engine=FakeEngine())).get("/netcheck.json").json()
     assert b["listenPort"] == 6881
     assert b["peers"] == 7

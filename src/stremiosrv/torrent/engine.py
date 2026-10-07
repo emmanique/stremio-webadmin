@@ -1440,6 +1440,17 @@ class Engine:
         """The actual TCP port the session is listening on (0 if not yet listening)."""
         return self._ses.listen_port()
 
+    def set_upnp_enabled(self, enabled: bool) -> bool:
+        """Apply UPnP and NAT-PMP together without restarting the session."""
+        enabled = bool(enabled)
+        current = self._ses.get_settings()
+        if bool(current.get("enable_upnp")) == enabled and bool(current.get("enable_natpmp")) == enabled:
+            return False
+        self._ses.apply_settings({"enable_upnp": enabled, "enable_natpmp": enabled})
+        if not enabled:
+            self._portmap = {"mapped": False, "transport": None, "externalPort": None}
+        return True
+
     def set_listen_port(self, port: int) -> bool:
         """Move the libtorrent listener to *port* without restarting the server.
 
@@ -1477,6 +1488,10 @@ class Engine:
     def portmap_status(self) -> dict:
         """Latest UPnP/NAT-PMP auto-forward result for the BT port (best-effort)."""
         return dict(self._portmap)
+
+    def upnp_enabled(self) -> bool:
+        settings = self._ses.get_settings()
+        return bool(settings.get("enable_upnp")) or bool(settings.get("enable_natpmp"))
 
     def shutdown(self) -> None:
         self.save_all_resume()

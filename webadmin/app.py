@@ -455,7 +455,7 @@ def config():
                 "value": value,
                 "displayValue": (netcheck.get("listenPort", value) if name == "bt_listen_port" else (value / 60 if name in MINUTES else value)),
                 "type": kind,
-                "description": (DESCRIPTIONS.get(name, "") + (f" Estado: {str(netcheck.get('listenPortMode', 'unknown')).upper()}." if name == "bt_listen_port" else "")),
+                "description": (DESCRIPTIONS.get(name, "") + (f" Estado efetivo: {str(netcheck.get('listenPortMode', 'unknown')).upper()}; porta {netcheck.get('listenPort', value)}. A porta é automática e pode ser substituída pela porta encaminhada pelo provider VPN." if name == "bt_listen_port" else "")),
                 "unit": "minutes" if name in MINUTES else None,
                 "inputScale": 60 if name in MINUTES else 1,
                 "editable": name not in READ_ONLY,

@@ -1,5 +1,5 @@
 FROM qmcgaw/gluetun:v3.41.3
-RUN apk add --no-cache socat
+RUN apk add --no-cache socat wireguard-tools libnatpmp
 COPY entrypoint.sh /stremio-vpn-entrypoint
 RUN chmod 0755 /stremio-vpn-entrypoint
 ENV STREMIO_VPN_CONFIG_DIR=/vpn

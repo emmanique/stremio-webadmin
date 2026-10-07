@@ -258,7 +258,7 @@ def build_app() -> FastAPI:
     from stremiosrv.torrent.auto_port import run_auto_port_watcher
     threading.Thread(
         target=run_auto_port_watcher,
-        args=(engine, settings.bt_listen_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", "")),
+        args=(engine, settings.bt_listen_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", ""), os.getenv("STREMIOSRV_VPN_ENABLED_FILE", ""), settings.enable_upnp),
         daemon=True,
     ).start()
     converter = Converter(settings.cache_root, settings.transcode_profile)

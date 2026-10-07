@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
+
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
@@ -27,6 +29,7 @@ VPN_DIR = Path(os.getenv("VPN_CONFIG_DIR", "/vpn"))
 GLUETUN_CONTAINER = os.getenv("VPN_CONTAINER", "stremio-gluetun")
 STREMIO_CONTAINER = os.getenv("STREMIO_CONTAINER", "stremio-libtorrent-server")
 PIHOLE_CONTAINER = os.getenv("PIHOLE_CONTAINER", "stremio-pihole")
+STREMIO_URL = os.getenv("STREMIO_URL", "http://stremio-libtorrent-server:11470").rstrip("/")
 SCRIPT_TAG = '<script src="/gluetun-admin.js"></script>'
 GLUETUN_LOCK = threading.Lock()
 
@@ -58,6 +61,8 @@ def _active_profile() -> dict[str, object]:
     if isinstance(data, dict):
         for source, target in (
             ("name", "name"),
+            ("provider", "provider"),
+            ("protocol", "protocol"),
             ("country", "country"),
             ("server_group", "serverGroup"),
             ("transport", "transport"),
@@ -198,6 +203,13 @@ def gluetun_status():
     dns_status, dns_error = _control_optional("/v1/dns/status") if gluetun else (None, None)
     updater_status, updater_error = _control_optional("/v1/updater/status") if gluetun else (None, None)
     stats = _docker_stats(gluetun)
+    netcheck = {}
+    try:
+        response = httpx.get(STREMIO_URL + "/netcheck.json", timeout=2)
+        response.raise_for_status()
+        netcheck = response.json()
+    except Exception:
+        pass
 
     state = (gluetun.attrs.get("State", {}) if gluetun else {}) or {}
     health = state.get("Health", {}) if isinstance(state.get("Health"), dict) else {}
@@ -240,6 +252,7 @@ def gluetun_status():
         },
         "pihole": _pihole_state(),
         "config": config,
+        "netcheck": {"listenPort": netcheck.get("listenPort", 6881), "listenPortMode": netcheck.get("listenPortMode", "direct" if direct_mode else "unknown"), "vpnEnabled": netcheck.get("vpnEnabled", vpn_requested)},
         "busy": GLUETUN_LOCK.locked(),
         "capturedAt": datetime.now(UTC).isoformat(),
     }

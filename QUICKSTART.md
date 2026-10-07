@@ -17,9 +17,9 @@ Current platform release:
 
 ```text
 Upstream Core   1.6.34
-Fork/Platform   3.0.12
-WebAdmin        3.0.12
-VPN Gateway     3.0.6
+Fork/Platform   3.0.13
+WebAdmin        3.0.13
+VPN Gateway     3.0.13
 ```
 
 ## 1. Obtain the deployment files
@@ -60,9 +60,9 @@ pihole/pihole:latest
 You can pin the coordinated release in `.env`:
 
 ```env
-STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.8
-WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.8
-VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.6
+STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.13
+WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.13
+VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.13
 ```
 
 ## 3. Host IP detection
@@ -224,7 +224,7 @@ Ensure host port 53 is available first.
 
 ## 9. Automatic VAAPI / NVIDIA transcoding
 
-Transcoding is **AUTO-only** in 3.0.5. There is no manual playback profile for Copy, H.264, HEVC, VAAPI, NVENC or CPU.
+Transcoding is **AUTO-only**. There is no manual playback profile for Copy, H.264, HEVC, VAAPI, NVENC or CPU.
 
 The decision flow is:
 

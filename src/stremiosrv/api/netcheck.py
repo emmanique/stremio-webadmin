@@ -12,7 +12,7 @@ import os
 
 from fastapi import APIRouter, Request
 
-from stremiosrv.torrent.auto_port import desired_port
+from stremiosrv.torrent.auto_port import desired_port, flag_enabled
 
 router = APIRouter()
 
@@ -29,12 +29,16 @@ def netcheck(request: Request) -> dict:
     if eng is None:
         return {"listenPort": None, "peers": 0, "inboundPeers": 0, "portMap": dict(_CLOSED_PORTMAP)}
     default_port = int(os.getenv("STREMIOSRV_BT_LISTEN_PORT", "6881"))
-    desired, auto_mode = desired_port(default_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", ""))
+    vpn_enabled = flag_enabled(os.getenv("STREMIOSRV_VPN_ENABLED_FILE", ""))
+    desired, auto_mode = desired_port(default_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", ""), vpn_enabled)
     actual = eng.listen_port()
     return {
         "listenPort": actual,
-        "listenPortMode": "vpn-forwarded" if auto_mode == "vpn-forwarded" and actual == desired else ("direct/default" if actual == default_port else "runtime"),
+        "listenPortMode": auto_mode if actual == desired else "runtime",
         "configuredDefaultPort": default_port,
+        "vpnEnabled": vpn_enabled,
+        "upnpPolicy": "disabled-by-vpn" if vpn_enabled else "direct-default",
+        "upnpEnabled": eng.upnp_enabled(),
         "peers": eng.peer_count(),
         "inboundPeers": eng.inbound_peer_count(),
         "portMap": eng.portmap_status(),

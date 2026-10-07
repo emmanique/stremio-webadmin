@@ -36,7 +36,7 @@
   section.className = 'page hidden';
   section.id = 'vpn';
   section.innerHTML = `
-    <article class="panel"><div class="title row"><span>VPN · CYBERGHOST / GLUETUN</span><button class="copy" id="vpnRefresh">↻ Refresh</button></div><div class="inner">
+    <article class="panel"><div class="title row"><span>VPN</span><button class="copy" id="vpnRefresh">↻ Refresh</button></div><div class="inner">
       <div class="vpnGrid">
         <div class="vpnCard"><span>Deployment</span><b id="vpnMode">—</b></div>
         <div class="vpnCard"><span>Tunnel</span><b id="vpnTunnel">—</b></div>
@@ -56,25 +56,29 @@
       </div>
       <div id="vpnActionState" class="saveState"></div>
       <div id="vpnTestResult" class="vpnInfo vpnResult">Protection test has not been run yet.</div>
-    </div><div class="foot">Only Stremio is routed through Gluetun. WebAdmin and Pi-hole stay on the LAN; VPN failure remains fail-closed.</div></article>
+    </div><div class="foot">Only Stremio traffic is routed through the selected VPN connection. WebAdmin and Pi-hole remain available on the LAN; VPN failure remains fail-closed.</div></article>
 
     <article class="panel"><div class="title row"><span>VPN CONNECTIONS</span><button class="btn" id="vpnNew">+ New connection</button></div><div class="inner">
-      <div class="vpnInfo"><b>CyberGhost router/OpenVPN profiles are managed independently.</b> Every new connection requires the CyberGhost ZIP containing <code>openvpn.ovpn</code>, <code>ca.crt</code>, <code>client.crt</code> and <code>client.key</code>. Credentials and keys remain in the private <code>vpn-data</code> volume.</div>
+      <div class="vpnInfo"><b>VPN connection profiles are stored privately.</b> Choose a provider when creating a connection; the form will display only the settings required by that provider and protocol.</div>
       <div id="vpnProfiles" class="vpnProfiles"><div class="vpnEmpty">Loading connections…</div></div>
-    </div><div class="foot">One profile can be marked for startup. You can still activate another profile temporarily without changing the startup default.</div></article>
+    </div><div class="foot">One profile can be marked for startup. To switch VPN connections, disconnect the active connection first, then activate the new profile.</div></article>
 
     <article class="panel vpnHidden" id="vpnEditor"><div class="title">CONNECTION PROFILE</div><div class="inner">
-      <div class="vpnFormHeader"><h3 id="vpnEditorTitle">New CyberGhost connection</h3><button class="btn ghost" id="vpnCancelEdit">Cancel</button></div>
+      <div class="vpnFormHeader"><h3 id="vpnEditorTitle">New VPN connection</h3><button class="btn ghost" id="vpnCancelEdit">Cancel</button></div>
       <div class="vpnForm">
-        <div class="vpnField"><label>Connection name</label><input id="vpnName" placeholder="e.g. CyberGhost Portugal"></div>
-        <div class="vpnField"><label>Protocol</label><input value="OpenVPN" disabled></div>
+        <div class="vpnField"><label>Connection name</label><input id="vpnName" placeholder="e.g. Portugal VPN"></div>
+        <div class="vpnField"><label>Provider</label><select id="vpnProvider"><option value="">Select provider…</option><option value="cyberghost">CyberGhost</option><option value="proton">Proton VPN</option></select></div><div class="vpnField"><label>Protocol</label><select id="vpnProtocol"><option value="">Select provider first</option></select></div>
+        <div class="vpnField" id="vpnMethodField"><label>Configuration method</label><select id="vpnConfigMethod"><option value="import">Import Proton .conf (recommended)</option><option value="native">Gluetun native (advanced)</option></select></div>
+        <div class="vpnField" id="vpnWgKeyField"><label>WireGuard private key</label><input id="vpnWgKey" type="password" autocomplete="new-password" placeholder="Write-only; leave blank to keep saved"><div id="vpnWgKeyState" class="vpnSecretState">Required for native WireGuard</div></div>
+        <div class="vpnField" id="vpnPortForwardField"><label class="vpnCheck"><input id="vpnPortForward" type="checkbox"> Enable provider port forwarding (NAT-PMP)</label><div id="vpnPortForwardState" class="vpnSecretState"></div></div>
+        <div class="vpnField full" id="vpnDetectedField"><label>Detected Proton settings</label><div id="vpnDetected" class="vpnSecretState">Load a Proton WireGuard .conf to detect provider-side settings.</div></div>
         <div class="vpnField"><label>Country</label><input id="vpnCountry" placeholder="e.g. Portugal"></div>
         <div class="vpnField"><label>Server group</label><input id="vpnServerGroup" placeholder="Auto-detected from openvpn.ovpn"></div>
         <div class="vpnField"><label>Transport</label><select id="vpnTransportCfg"><option value="auto">Auto from ZIP</option><option value="udp">UDP</option><option value="tcp">TCP</option></select></div>
         <div class="vpnField"><label>Pre-shared</label><input id="vpnPreShared" type="password" autocomplete="new-password" placeholder="CyberGhost / leave blank to keep saved"><div id="vpnPreState" class="vpnSecretState"></div></div>
         <div class="vpnField"><label>Generated OpenVPN username</label><input id="vpnUser" autocomplete="off" placeholder="Leave blank to keep saved value"><div id="vpnUserState" class="vpnSecretState"></div></div>
         <div class="vpnField"><label>Generated OpenVPN password</label><input id="vpnPass" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved value"><div id="vpnPassState" class="vpnSecretState"></div></div>
-        <div class="vpnField full"><label>CyberGhost configuration ZIP</label><input id="vpnBundle" type="file" accept=".zip,application/zip"><div id="vpnBundleState" class="vpnBundleState">Required for a new connection. Expected files: openvpn.ovpn, ca.crt, client.crt, client.key.</div></div>
+        <div class="vpnField full"><label id="vpnBundleLabel">CyberGhost configuration ZIP</label><input id="vpnBundle" type="file" accept=".zip,application/zip"><div id="vpnBundleState" class="vpnBundleState">Required for a new connection. Expected files: openvpn.ovpn, ca.crt, client.crt, client.key.</div></div>
         <div class="vpnField full"><label>LAN CIDRs allowed outside the VPN</label><input id="vpnCidrs" value="192.168.0.0/16,10.0.0.0/8,172.30.0.0/24"></div>
         <div class="vpnField full"><label>CyberGhost extra features used when generating this profile</label><div class="vpnChecks">
           <label class="vpnCheck"><input id="vpnMalicious" type="checkbox"> Protection against malicious websites</label>
@@ -88,7 +92,7 @@
       <div id="vpnSaveState" class="saveState"></div>
     </div><div class="foot">Secrets are write-only. Existing passwords, pre-shared values and certificate material are never sent back to the browser.</div></article>
 
-    <article class="panel"><div class="title row"><span>VPN LOGS</span><button class="copy" id="vpnLogsRefresh">↻ Refresh</button></div><div class="inner"><pre class="vpnLogs" id="vpnLogs">VPN logs not loaded.</pre></div><div class="foot">Recent Gluetun output. Saved credentials are redacted before logs are returned.</div></article>
+    <article class="panel"><div class="title row"><span>VPN LOGS</span><button class="copy" id="vpnLogsRefresh">↻ Refresh</button></div><div class="inner"><pre class="vpnLogs" id="vpnLogs">VPN logs not loaded.</pre></div><div class="foot">Recent VPN gateway output. Saved credentials and private material are redacted before logs are returned.</div></article>
   `;
   document.querySelector('main.shell').appendChild(section);
 
@@ -132,9 +136,9 @@
     if (data.deploymentMode !== 'vpn') {
       $('vpnModeHint').innerHTML = '<b>Direct mode is active.</b> The gateway remains online; create/import a connection and enable VPN when ready.';
     } else if (!g.controlAvailable) {
-      $('vpnModeHint').innerHTML = `<b>VPN stack detected, control API not ready.</b> ${esc(g.controlError || 'Gluetun may still be starting or waiting for a valid profile.')}`;
+      $('vpnModeHint').innerHTML = `<b>VPN stack detected, control API not ready.</b> ${esc(g.controlError || 'The VPN gateway may still be starting or waiting for a valid profile.')}`;
     } else {
-      $('vpnModeHint').innerHTML = `<b>VPN mode is active.</b> ${esc(active.name || 'Selected connection')} routes Stremio through Gluetun. ${(data.startupProfileId && data.startupProfileId === data.activeProfileId) ? 'This is also the startup connection.' : ''}`;
+      $('vpnModeHint').innerHTML = `<b>VPN mode is active.</b> ${esc(active.name || 'Selected connection')} routes Stremio through the VPN gateway. ${(data.startupProfileId && data.startupProfileId === data.activeProfileId) ? 'This is also the startup connection.' : ''}`;
     }
     const controllable = !!g.present;
     $('vpnConnect').disabled = !controllable || running || data.deploymentMode === 'vpn';
@@ -155,21 +159,28 @@
   function renderProfiles(data) {
     profiles = data.profiles || [];
     if (!profiles.length) {
-      $('vpnProfiles').innerHTML = '<div class="vpnEmpty">No VPN connections yet. Create one from your CyberGhost router/OpenVPN ZIP.</div>';
+      $('vpnProfiles').innerHTML = '<div class="vpnEmpty">No VPN connections yet. Select New connection and choose a provider.</div>';
       return;
     }
     $('vpnProfiles').innerHTML = profiles.map(p => {
+      const provider = String(p.provider || '').toLowerCase();
+      const protocol = String(p.protocol || 'openvpn').toLowerCase();
+      const protocolLabel = protocol === 'wireguard' ? 'WIREGUARD' : `OPENVPN ${esc(String(p.transport || '').toUpperCase())}`;
       const flags = [
-        p.active ? '<span class="vpnFlag active">ACTIVE</span>' : '',
+        p.active ? '<span class="vpnFlag active">SELECTED</span>' : '',
         p.startupEnabled ? '<span class="vpnFlag startup">START AT BOOT</span>' : '',
-        `<span class="vpnFlag">OPENVPN ${esc(String(p.transport || '').toUpperCase())}</span>`,
+        `<span class="vpnFlag">${protocolLabel}</span>`,
+        provider === 'proton' && p.portForwarding ? '<span class="vpnFlag">NAT-PMP</span>' : '',
         ...featureLabels(p).map(v => `<span class="vpnFlag">${esc(v)}</span>`),
       ].filter(Boolean).join('');
-      const files = (p.bundleFiles || []).map(name => `✓ ${esc(name)}`).join(' · ');
+      let files = '';
+      if (provider === 'proton' && protocol === 'wireguard') files = p.configMethod === 'import' ? '✓ Proton WireGuard .conf' : '✓ Proton WireGuard native configuration';
+      else if (provider === 'proton' && protocol === 'openvpn') files = '✓ Proton OpenVPN configuration · ✓ credentials stored privately';
+      else files = (p.bundleFiles || []).map(name => `✓ ${esc(name)}`).join(' · ') || 'OpenVPN bundle material incomplete';
       return `<div class="vpnProfile">
-        <div class="vpnProfileTop"><div><div class="vpnProfileTitle">${esc(p.name)}</div><div class="vpnProfileMeta">${esc(p.country || 'Country not specified')} · ${esc(p.serverGroup || 'Server group unavailable')}${p.serverPort ? ':' + esc(p.serverPort) : ''}</div></div><div>${p.active ? badge(true, 'active') : ''}</div></div>
+        <div class="vpnProfileTop"><div><div class="vpnProfileTitle">${esc(p.name)}</div><div class="vpnProfileMeta">${esc(p.country || 'Country not specified')} · ${esc(p.serverGroup || 'Server group unavailable')}${p.serverPort ? ':' + esc(p.serverPort) : ''}</div></div><div>${p.active ? badge(true, 'selected') : ''}</div></div>
         <div class="vpnFlags">${flags}</div>
-        <div class="vpnFiles">${files || 'Bundle material incomplete'}</div>
+        <div class="vpnFiles">${files}</div>
         <div class="vpnProfileButtons">
           <button class="mini" data-vpn-action="edit" data-id="${esc(p.id)}">Edit</button>
           <button class="mini" data-vpn-action="activate" data-id="${esc(p.id)}" ${p.active ? 'disabled' : ''}>Activate</button>
@@ -197,22 +208,56 @@
   }
   async function refreshAll() { await Promise.all([loadStatus(), loadProfiles(), loadLogs()]); }
 
+  function setProviderMode(provider) {
+    const proton = provider === 'proton', cyberghost = provider === 'cyberghost';
+    const proto = $('vpnProtocol'); proto.innerHTML = '';
+    if (proton) proto.innerHTML = '<option value="wireguard">WireGuard (recommended)</option><option value="openvpn">OpenVPN</option>';
+    else if (cyberghost) proto.innerHTML = '<option value="openvpn">OpenVPN</option>';
+    else proto.innerHTML = '<option value="">Select provider first</option>';
+    $('vpnPreShared').closest('.vpnField').style.display = cyberghost ? '' : 'none';
+    $('vpnTransportCfg').closest('.vpnField').style.display = cyberghost ? '' : 'none';
+    $('vpnServerGroup').closest('.vpnField').style.display = cyberghost ? '' : 'none';
+    $('vpnMalicious').closest('.vpnField.full').style.display = cyberghost ? '' : 'none';
+    if (proton) $('vpnCidrs').value = '192.168.0.0/16,172.30.0.0/24';
+    else if (cyberghost && !$('vpnCidrs').value) $('vpnCidrs').value = '192.168.0.0/16,10.0.0.0/8,172.30.0.0/24';
+    updateProtonMethod();
+  }
+
+  function updateProtonMethod() {
+    const proton = $('vpnProvider').value === 'proton';
+    const openvpn = proton && $('vpnProtocol').value === 'openvpn';
+    const imported = proton && !openvpn && $('vpnConfigMethod').value === 'import';
+    $('vpnMethodField').style.display = proton && !openvpn ? '' : 'none';
+    $('vpnDetectedField').style.display = imported ? '' : 'none';
+    $('vpnPortForwardField').style.display = proton ? '' : 'none';
+    $('vpnCountry').placeholder = proton ? (openvpn ? 'Auto / defined by .ovpn (optional)' : imported ? 'Auto / defined by .conf (optional)' : 'Optional country filter') : 'e.g. Portugal';
+    $('vpnWgKeyField').style.display = proton && !openvpn && !imported ? '' : 'none';
+    $('vpnUser').closest('.vpnField').style.display = ($('vpnProvider').value === 'cyberghost' || openvpn) ? '' : 'none';
+    $('vpnPass').closest('.vpnField').style.display = ($('vpnProvider').value === 'cyberghost' || openvpn) ? '' : 'none';
+    $('vpnBundle').closest('.vpnField').style.display = ($('vpnProvider').value === 'cyberghost' || imported || openvpn) ? '' : 'none';
+    $('vpnBundleLabel').textContent = openvpn ? 'Proton OpenVPN configuration (.ovpn or .conf)' : imported ? 'Proton WireGuard configuration (.conf)' : 'OpenVPN configuration bundle (.zip)';
+    $('vpnBundle').accept = openvpn ? '.ovpn,.conf,text/plain' : imported ? '.conf,text/plain' : '.zip,application/zip';
+    $('vpnBundle').disabled = !($('vpnProvider').value === 'cyberghost' || imported || openvpn);
+    $('vpnBundleState').textContent = openvpn ? 'Import the Linux OpenVPN configuration downloaded from Proton VPN. Use the separate Proton OpenVPN username/password, not your normal account password.' : imported ? 'Recommended: import the WireGuard .conf generated by Proton VPN.' : $('vpnProvider').value === 'cyberghost' ? 'Select the CyberGhost OpenVPN ZIP.' : 'Advanced: Gluetun native WireGuard uses the private key; no .conf upload is required.';
+  }
+
   function resetEditor() {
     editingId = null;
-    $('vpnEditorTitle').textContent = 'New CyberGhost connection';
+    $('vpnEditorTitle').textContent = 'New VPN connection';
+    $('vpnProvider').value = ''; $('vpnConfigMethod').value='import'; $('vpnWgKey').value=''; $('vpnPortForward').checked=false; $('vpnDetected').textContent='Load a Proton WireGuard .conf to detect provider-side settings.'; setProviderMode('');
     $('vpnName').value = '';
     $('vpnCountry').value = '';
     $('vpnServerGroup').value = '';
     $('vpnTransportCfg').value = 'auto';
     $('vpnUser').value = '';
     $('vpnPass').value = '';
-    $('vpnPreShared').value = 'CyberGhost';
+    $('vpnPreShared').value = '';
     $('vpnBundle').value = '';
     $('vpnCidrs').value = '192.168.0.0/16,10.0.0.0/8,172.30.0.0/24';
     $('vpnMalicious').checked = false; $('vpnAds').checked = false; $('vpnTracking').checked = false; $('vpnHttps').checked = false; $('vpnStartup').checked = false;
     $('vpnUserState').textContent = 'Required for a new connection';
     $('vpnPassState').textContent = 'Required for a new connection';
-    $('vpnPreState').textContent = 'CyberGhost portal field; stored privately';
+    $('vpnPreState').textContent = 'Provider-specific value; stored privately';
     $('vpnBundleState').textContent = 'Required for a new connection. Expected files: openvpn.ovpn, ca.crt, client.crt, client.key.';
     setSave('');
   }
@@ -227,6 +272,7 @@
     if (!p) return;
     resetEditor(); editingId = id;
     $('vpnEditorTitle').textContent = `Edit · ${p.name}`;
+    $('vpnProvider').value = String(p.provider || 'CyberGhost').toLowerCase().replace(' vpn',''); $('vpnConfigMethod').value=p.configMethod||'import'; setProviderMode($('vpnProvider').value); $('vpnPortForward').checked=!!p.portForwarding; $('vpnDetected').textContent=p.protonMetadata ? Object.entries(p.protonMetadata).filter(([,v])=>v).map(([k,v])=>`${k}: ${v}`).join(' · ') || 'No Proton metadata detected.' : 'No Proton metadata detected.'; $('vpnWgKeyState').textContent=(p.credentials||{}).wireguardPrivateKey?'✓ Saved (value hidden; blank keeps it)':'Required for native WireGuard';
     $('vpnName').value = p.name || '';
     $('vpnCountry').value = p.country || '';
     $('vpnServerGroup').value = p.serverGroup || '';
@@ -256,26 +302,40 @@
     const file = $('vpnBundle').files[0];
     return {
       name: $('vpnName').value.trim(),
+      provider: $('vpnProvider').value,
+      protocol: $('vpnProtocol').value || null,
+      config_method: $('vpnConfigMethod').value || null,
+      wireguard_private_key: $('vpnWgKey').value || null,
+      port_forwarding: $('vpnPortForward').checked,
       country: $('vpnCountry').value.trim(),
       server_group: $('vpnServerGroup').value.trim(),
       transport: $('vpnTransportCfg').value,
       username: $('vpnUser').value || null,
       password: $('vpnPass').value || null,
       pre_shared: $('vpnPreShared').value || null,
-      bundle_base64: file ? await fileBase64(file) : null,
-      bundle_filename: file ? file.name : null,
+      bundle_base64: $('vpnProvider').value === 'cyberghost' && file ? await fileBase64(file) : null,
+      bundle_filename: $('vpnProvider').value === 'cyberghost' && file ? file.name : null,
+      wireguard_config_base64: $('vpnProvider').value === 'proton' && $('vpnProtocol').value === 'wireguard' && file ? await fileBase64(file) : null,
+      wireguard_filename: $('vpnProvider').value === 'proton' && $('vpnProtocol').value === 'wireguard' && file ? file.name : null,
+      openvpn_config_base64: $('vpnProvider').value === 'proton' && $('vpnProtocol').value === 'openvpn' && file ? await fileBase64(file) : null,
+      openvpn_filename: $('vpnProvider').value === 'proton' && $('vpnProtocol').value === 'openvpn' && file ? file.name : null,
       firewall_outbound_subnets: $('vpnCidrs').value.trim(),
       features: {malicious_websites:$('vpnMalicious').checked, block_ads:$('vpnAds').checked, block_tracking:$('vpnTracking').checked, redirect_https:$('vpnHttps').checked},
       startup_enabled: $('vpnStartup').checked,
     };
   }
   async function saveProfile(activateAfter = false) {
-    setSave('Validating CyberGhost connection…');
+    setSave('Validating VPN connection…');
     try {
       const body = await profileBody();
       if (!body.name) throw new Error('Connection name is required.');
-      if (!editingId && !body.bundle_base64) throw new Error('Select the CyberGhost ZIP configuration bundle.');
-      if (!editingId && (!body.username || !body.password)) throw new Error('CyberGhost OpenVPN username and password are required.');
+      if (!body.provider) throw new Error('Select a VPN provider.');
+      if (!editingId && body.provider === 'cyberghost' && !body.bundle_base64) throw new Error('Select the CyberGhost ZIP configuration bundle.');
+      if (!editingId && body.provider === 'cyberghost' && (!body.username || !body.password)) throw new Error('CyberGhost OpenVPN username and password are required.');
+      if (!editingId && body.provider === 'proton' && body.protocol === 'wireguard' && body.config_method === 'native' && !body.wireguard_private_key) throw new Error('Enter the Proton WireGuard private key or choose Import .conf.');
+      if (!editingId && body.provider === 'proton' && body.protocol === 'wireguard' && body.config_method === 'import' && !body.wireguard_config_base64) throw new Error('Select the Proton WireGuard .conf file.');
+      if (!editingId && body.provider === 'proton' && body.protocol === 'openvpn' && !body.openvpn_config_base64) throw new Error('Select the Proton OpenVPN configuration file (.ovpn or .conf).');
+      if (!editingId && body.provider === 'proton' && body.protocol === 'openvpn' && (!body.username || !body.password)) throw new Error('Enter the Proton OpenVPN username and password.');
       const id = editingId;
       const path = id ? `/api/vpn/profiles/${encodeURIComponent(id)}` : '/api/vpn/profiles';
       const saved = await api(path, {method:id ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -323,8 +383,12 @@
   });
   $('vpnBundle').addEventListener('change', () => {
     const file = $('vpnBundle').files[0];
-    $('vpnBundleState').textContent = file ? `Selected: ${file.name} · ${(file.size/1024).toFixed(1)} KB. Server will verify openvpn.ovpn + ca.crt + client.crt + client.key.` : 'No ZIP selected.';
+    const proton = $('vpnProvider').value === 'proton';
+    $('vpnBundleState').textContent = file ? `Selected: ${file.name} · ${(file.size/1024).toFixed(1)} KB. Server will validate ${proton ? 'WireGuard full-tunnel + NAT-PMP metadata' : 'OpenVPN bundle material'}.` : 'No configuration selected.';
   });
+  $('vpnProvider').addEventListener('change', () => { $('vpnBundle').value=''; setProviderMode($('vpnProvider').value); });
+  $('vpnConfigMethod').addEventListener('change', () => { $('vpnBundle').value=''; updateProtonMethod(); });
+  $('vpnProtocol').addEventListener('change', () => { $('vpnBundle').value=''; updateProtonMethod(); });
   $('vpnNew').onclick = openNew;
   $('vpnCancelEdit').onclick = () => $('vpnEditor').classList.add('vpnHidden');
   $('vpnSaveProfile').onclick = () => saveProfile(false);

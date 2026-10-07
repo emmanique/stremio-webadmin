@@ -63,6 +63,15 @@ class ProfileBody(BaseModel):
     pre_shared: str | None = Field(default=None, max_length=2048)
     bundle_base64: str | None = Field(default=None, max_length=4 * 1024 * 1024)
     bundle_filename: str | None = Field(default=None, max_length=255)
+    provider: str = Field(default="cyberghost", max_length=32)
+    protocol: str | None = Field(default=None, max_length=16)
+    config_method: str | None = Field(default=None, max_length=16)
+    wireguard_private_key: str | None = Field(default=None, max_length=256)
+    port_forwarding: bool = False
+    wireguard_config_base64: str | None = Field(default=None, max_length=1024 * 1024)
+    wireguard_filename: str | None = Field(default=None, max_length=255)
+    openvpn_config_base64: str | None = Field(default=None, max_length=1024 * 1024)
+    openvpn_filename: str | None = Field(default=None, max_length=255)
     firewall_outbound_subnets: str = Field(default=DEFAULT_LAN_CIDRS, max_length=512)
     features: VPNFeatures = Field(default_factory=VPNFeatures)
     startup_enabled: bool = False
@@ -307,6 +316,65 @@ def _runtime_config(profile_id: str, original: str, expected_transport: str) -> 
     }
 
 
+def _prepare_wireguard(encoded: str) -> dict:
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(400, "WireGuard configuration is not valid base64") from exc
+    if len(raw) > MAX_MEMBER_BYTES:
+        raise HTTPException(413, "WireGuard configuration is too large")
+    text = _text(raw, "WireGuard configuration")
+    section = ""
+    values: dict[str, str] = {}
+    peer: dict[str, str] = {}
+    comments: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("#"):
+            comments.append(line[1:].strip())
+            continue
+        if line.lower() == "[interface]": section = "interface"; continue
+        if line.lower() == "[peer]": section = "peer"; continue
+        if not line or "=" not in line: continue
+        key, value = (x.strip() for x in line.split("=", 1))
+        (values if section == "interface" else peer)[key.lower()] = value
+    required_i = {"privatekey", "address"}; required_p = {"publickey", "allowedips", "endpoint"}
+    if not required_i.issubset(values) or not required_p.issubset(peer):
+        raise HTTPException(400, "WireGuard configuration is missing required Interface/Peer fields")
+    allowed = [x.strip() for x in peer["allowedips"].split(",")]
+    if "0.0.0.0/0" not in allowed:
+        raise HTTPException(400, "WireGuard VPN profile must route all IPv4 Internet traffic (AllowedIPs 0.0.0.0/0)")
+    endpoint = peer["endpoint"]
+    if endpoint.startswith("["):
+        host, sep, port = endpoint.rpartition(":")
+    else:
+        host, sep, port = endpoint.rpartition(":")
+    if not sep or not port.isdigit() or not (1 <= int(port) <= 65535):
+        raise HTTPException(400, "WireGuard Endpoint must include a valid port")
+    host = host.strip("[]")
+    def comment_value(label: str) -> str | None:
+        for comment in comments:
+            m = re.match(rf"{re.escape(label)}\s*=\s*(.+)$", comment, re.I)
+            if m: return m.group(1).strip()
+        return None
+    metadata = {
+        "bouncing": comment_value("Bouncing"),
+        "netShield": comment_value("NetShield"),
+        "moderateNat": comment_value("Moderate NAT"),
+        "natPmp": comment_value("NAT-PMP (Port Forwarding)"),
+        "vpnAccelerator": comment_value("VPN Accelerator"),
+    }
+    natpmp = str(metadata["natPmp"] or "").lower() in {"on", "true", "1", "yes"}
+    return {"original": text, "privateKey": values["privatekey"], "addresses": values["address"],
+            "dns": values.get("dns", ""), "publicKey": peer["publickey"], "allowedIps": peer["allowedips"],
+            "endpointHost": host, "endpointPort": int(port), "persistentKeepalive": peer.get("persistentkeepalive", ""),
+            "portForwarding": natpmp, "protonMetadata": metadata}
+
+
+def _write_wireguard(path: Path, prepared: dict) -> None:
+    _secure_write(path / "wireguard.conf", prepared["original"], newline=True)
+
+
 def _prepare_bundle(bundle: dict[str, bytes], profile_id: str, requested_transport: str) -> dict:
     original = _text(bundle["openvpn.ovpn"], "openvpn.ovpn")
     ca, cert, key = (_text(bundle[name], name) for name in ("ca.crt", "client.crt", "client.key"))
@@ -346,7 +414,7 @@ def _has(path: Path) -> bool:
 def _public(profile_id: str, meta: dict | None = None) -> dict:
     path, meta = _profile_dir(profile_id), meta or _meta(profile_id)
     return {
-        "id": profile_id, "name": meta.get("name", profile_id), "provider": "CyberGhost", "protocol": "openvpn",
+        "id": profile_id, "name": meta.get("name", profile_id), "provider": str(meta.get("provider") or "cyberghost").title(), "protocol": meta.get("protocol", "openvpn"),
         "country": meta.get("country", ""), "serverGroup": meta.get("serverGroup", ""),
         "serverPort": meta.get("serverPort"), "transport": meta.get("transport", "udp"),
         "firewallOutboundSubnets": meta.get("firewallOutboundSubnets", DEFAULT_LAN_CIDRS),
@@ -355,11 +423,22 @@ def _public(profile_id: str, meta: dict | None = None) -> dict:
         "bundleFiles": [name for name in REQUIRED if _has(path / name)],
         "credentials": {"username": _has(path / "username"), "password": _has(path / "password"),
                         "preShared": _has(path / "pre_shared"), "caCert": _has(path / "ca.crt"),
-                        "clientCert": _has(path / "client.crt"), "clientKey": _has(path / "client.key")},
+                        "clientCert": _has(path / "client.crt"), "clientKey": _has(path / "client.key"),
+                        "wireguardPrivateKey": _has(path / "wireguard_private_key")},
         "active": _marker(ACTIVE_FILE) == profile_id, "startupEnabled": _marker(STARTUP_FILE) == profile_id,
-        "extraFeaturesMode": "cyberghost-profile-metadata",
+        "extraFeaturesMode": "proton-natpmp" if str(meta.get("provider", "")).lower() == "proton" else "cyberghost-profile-metadata",
+        "portForwarding": bool(meta.get("portForwarding", False)),
+        "configMethod": meta.get("configMethod"),
+        "protonMetadata": meta.get("protonMetadata", {}),
     }
 
+
+
+def provider_catalog():
+    return {"providers": [
+        {"id": "cyberghost", "name": "CyberGhost", "protocols": ["openvpn"], "configuration": "zip", "credentials": True, "portForwarding": "provider-dependent"},
+        {"id": "proton", "name": "Proton VPN", "protocols": ["wireguard", "openvpn"], "configuration": ["conf", "ovpn"], "credentials": "protocol-dependent", "portForwarding": "nat-pmp"},
+    ]}
 
 def list_profiles():
     _ensure_dirs()
@@ -375,6 +454,51 @@ def list_profiles():
 
 def create_profile(body: ProfileBody):
     _ensure_dirs()
+    if body.provider.strip().lower() == "proton":
+        protocol = (body.protocol or "wireguard").strip().lower()
+        method = (body.config_method or "import").strip().lower()
+        if protocol not in {"wireguard", "openvpn"}:
+            raise HTTPException(400, "unsupported Proton VPN protocol")
+        if protocol == "wireguard" and method not in {"native", "import"}:
+            raise HTTPException(400, "invalid Proton WireGuard configuration method")
+        profile_id, cidrs = _new_id(body.name), _validate_cidrs(body.firewall_outbound_subnets)
+        cidrs = ",".join(x for x in cidrs.split(",") if x.strip() != "10.0.0.0/8")
+        path = _profile_dir(profile_id); path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        try:
+            port_forwarding = bool(body.port_forwarding); server_group = ""; server_port = None; transport = "udp"
+            if protocol == "wireguard":
+                if method == "import":
+                    if not body.wireguard_config_base64: raise HTTPException(400, "a Proton WireGuard .conf file is required")
+                    wg = _prepare_wireguard(body.wireguard_config_base64); _write_wireguard(path, wg)
+                    port_forwarding = bool(wg["portForwarding"])
+                    moderate_nat = str(wg.get("protonMetadata", {}).get("moderateNat") or "").lower() in {"on", "true", "1", "yes"}
+                    if port_forwarding and moderate_nat:
+                        raise HTTPException(409, "Proton profile conflict: Moderate NAT and NAT-PMP port forwarding cannot be enabled together. Generate a new Proton configuration with Moderate NAT off and NAT-PMP on.")
+                    server_group, server_port = wg["endpointHost"], wg["endpointPort"]
+                else:
+                    if not body.wireguard_private_key: raise HTTPException(400, "Proton WireGuard private key is required for native mode")
+                    _secure_write(path / "wireguard_private_key", body.wireguard_private_key.strip(), newline=True)
+            else:
+                method = "import"
+                if not body.openvpn_config_base64: raise HTTPException(400, "a Proton OpenVPN .ovpn file is required")
+                if not body.username or not body.password: raise HTTPException(400, "Proton OpenVPN username and password are required")
+                try: raw = base64.b64decode(body.openvpn_config_base64, validate=True)
+                except (binascii.Error, ValueError) as exc: raise HTTPException(400, "OpenVPN configuration is not valid base64") from exc
+                text = _text(raw, "OpenVPN configuration")
+                if not re.search(r"(?m)^remote\s+\S+\s+\d+", text): raise HTTPException(400, "OpenVPN configuration has no remote server")
+                _secure_write(path / "openvpn.runtime.ovpn", text, newline=True); _secure_write(path / "username", body.username); _secure_write(path / "password", body.password)
+                m=re.search(r"(?m)^remote\s+(\S+)\s+(\d+)", text); server_group, server_port=m.group(1), int(m.group(2))
+                pm=re.search(r"(?m)^proto\s+(udp|tcp(?:-client)?)", text, re.I); transport="tcp" if pm and pm.group(1).lower().startswith("tcp") else "udp"
+            now = datetime.now(UTC).isoformat()
+            meta={"id":profile_id,"name":body.name.strip(),"provider":"proton","protocol":protocol,"configMethod":method,"country":body.country.strip(),"serverGroup":server_group,"serverPort":server_port,"transport":transport,"firewallOutboundSubnets":cidrs,"portForwarding":port_forwarding,"protonMetadata": wg.get("protonMetadata", {}) if protocol=="wireguard" and method=="import" else {},"wireguardFilename":(body.wireguard_filename or "proton-wireguard.conf").strip() if protocol=="wireguard" and method=="import" else None,"openvpnFilename":(body.openvpn_filename or "proton.ovpn").strip() if protocol=="openvpn" else None,"createdAt":now,"updatedAt":now}
+            _secure_write(path / "firewall_outbound_subnets.txt", cidrs, newline=True); _write_json(path / "profile.json", meta)
+            if body.startup_enabled: _set_marker(STARTUP_FILE, profile_id)
+            _audit("vpn.profile.create", f"profile={profile_id} provider=proton protocol={protocol} method={method}")
+            return {"ok":True,"profile":_public(profile_id)}
+        except Exception:
+            shutil.rmtree(path, ignore_errors=True); raise
+    if body.provider.strip().lower() != "cyberghost":
+        raise HTTPException(400, "unsupported VPN provider")
     if not body.bundle_base64:
         raise HTTPException(400, "a CyberGhost ZIP bundle is required for every new VPN connection")
     if not body.username or not body.password:
@@ -410,28 +534,69 @@ def create_profile(body: ProfileBody):
 
 def update_profile(profile_id: str, body: ProfileBody):
     profile_id, path, meta = _profile_id(profile_id), _profile_dir(profile_id), _meta(profile_id)
-    cidrs, prepared = _validate_cidrs(body.firewall_outbound_subnets), None
+    if _marker(ACTIVE_FILE) == profile_id and legacy._vpn_requested():
+        raise HTTPException(409, "disconnect the active VPN connection before editing its profile")
+    cidrs = _validate_cidrs(body.firewall_outbound_subnets)
+    provider = str(meta.get("provider", "cyberghost")).lower()
+    protocol = str(meta.get("protocol", "openvpn")).lower()
     endpoint = {key: meta.get(key) for key in ("serverGroup", "serverIp", "serverPort", "transport")}
-    if body.bundle_base64:
-        prepared = _prepare_bundle(_decode_zip(body.bundle_base64), profile_id, body.transport.lower())
-        endpoint = prepared["endpoint"]
-        if body.server_group and body.server_group.lower() != str(endpoint["serverGroup"]).lower():
-            raise HTTPException(400, "server group does not match the replacement openvpn.ovpn")
-    elif body.transport.lower() not in {"auto", str(meta.get("transport", "udp")).lower()}:
-        raise HTTPException(400, "changing UDP/TCP requires a matching replacement CyberGhost ZIP")
-    if prepared:
-        _write_bundle(path, prepared)
-    if body.username:
-        _secure_write(path / "username", body.username.strip())
-    if body.password:
-        _secure_write(path / "password", body.password)
-    if body.pre_shared:
-        _secure_write(path / "pre_shared", body.pre_shared)
-    meta.update({"name": body.name.strip(), "country": body.country.strip(), **endpoint,
-                 "firewallOutboundSubnets": cidrs, "features": body.features.model_dump(),
-                 "updatedAt": datetime.now(UTC).isoformat()})
-    if body.bundle_filename:
-        meta["bundleFilename"] = body.bundle_filename.strip()
+
+    if provider == "proton" and protocol == "wireguard":
+        if body.wireguard_config_base64:
+            wg = _prepare_wireguard(body.wireguard_config_base64)
+            moderate_nat = str(wg.get("protonMetadata", {}).get("moderateNat") or "").lower() in {"on", "true", "1", "yes"}
+            if wg["portForwarding"] and moderate_nat:
+                raise HTTPException(409, "Proton profile conflict: Moderate NAT and NAT-PMP port forwarding cannot be enabled together. Generate a new Proton configuration with Moderate NAT off and NAT-PMP on.")
+            _write_wireguard(path, wg)
+            requested_pf = bool(body.port_forwarding)
+            meta.update({"serverGroup": wg["endpointHost"], "serverPort": wg["endpointPort"], "transport": "udp",
+                         "portForwarding": requested_pf, "protonMetadata": wg.get("protonMetadata", {}),
+                         "configMethod": "import"})
+            if body.wireguard_filename:
+                meta["wireguardFilename"] = body.wireguard_filename.strip()
+        # Port forwarding is a profile policy, independent of whether the imported .conf changed.
+        # The Proton NAT-PMP supervisor verifies provider capability at runtime.
+        meta["portForwarding"] = bool(body.port_forwarding)
+    elif provider == "proton" and protocol == "openvpn":
+        if body.openvpn_config_base64:
+            try:
+                raw = base64.b64decode(body.openvpn_config_base64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise HTTPException(400, "OpenVPN configuration is not valid base64") from exc
+            text = _text(raw, "OpenVPN configuration")
+            host, port, transport = _parse_ovpn(text)
+            _secure_write(path / "openvpn.runtime.ovpn", text, newline=True)
+            meta.update({"serverGroup": host, "serverPort": port, "transport": transport, "portForwarding": bool(body.port_forwarding)})
+            if body.openvpn_filename:
+                meta["openvpnFilename"] = body.openvpn_filename.strip()
+        if body.username:
+            _secure_write(path / "username", body.username.strip())
+        if body.password:
+            _secure_write(path / "password", body.password)
+        meta["portForwarding"] = bool(body.port_forwarding)
+    else:
+        prepared = None
+        if body.bundle_base64:
+            prepared = _prepare_bundle(_decode_zip(body.bundle_base64), profile_id, body.transport.lower())
+            endpoint = prepared["endpoint"]
+            if body.server_group and body.server_group.lower() != str(endpoint["serverGroup"]).lower():
+                raise HTTPException(400, "server group does not match the replacement openvpn.ovpn")
+        elif body.transport.lower() not in {"auto", str(meta.get("transport", "udp")).lower()}:
+            raise HTTPException(400, "changing UDP/TCP requires a matching replacement CyberGhost ZIP")
+        if prepared:
+            _write_bundle(path, prepared)
+        meta.update(endpoint)
+        if body.bundle_filename:
+            meta["bundleFilename"] = body.bundle_filename.strip()
+        if body.username:
+            _secure_write(path / "username", body.username.strip())
+        if body.password:
+            _secure_write(path / "password", body.password)
+        if body.pre_shared:
+            _secure_write(path / "pre_shared", body.pre_shared)
+
+    meta.update({"name": body.name.strip(), "country": body.country.strip(), "firewallOutboundSubnets": cidrs,
+                 "features": body.features.model_dump(), "updatedAt": datetime.now(UTC).isoformat()})
     _secure_write(path / "firewall_outbound_subnets.txt", cidrs, newline=True)
     _write_json(path / "profile.json", meta)
     if body.startup_enabled:
@@ -462,7 +627,9 @@ def delete_profile(profile_id: str):
     profile_id, path = _profile_id(profile_id), _profile_dir(profile_id)
     _meta(profile_id)
     if _marker(ACTIVE_FILE) == profile_id:
-        raise HTTPException(409, "activate another VPN connection before deleting the active one")
+        if legacy._vpn_requested():
+            raise HTTPException(409, "disconnect the active VPN connection before deleting it")
+        _clear_marker(ACTIVE_FILE)
     if _marker(STARTUP_FILE) == profile_id:
         _clear_marker(STARTUP_FILE)
     if _marker(NEXT_FILE) == profile_id:
@@ -483,10 +650,22 @@ def _refresh_runtime(profile_id: str) -> None:
 
 def activate_profile(profile_id: str):
     profile_id, path, meta = _profile_id(profile_id), _profile_dir(profile_id), _meta(profile_id)
-    missing = [name for name in ("username", "password", *REQUIRED) if not _has(path / name)]
+    current = _marker(ACTIVE_FILE)
+    requested = legacy._vpn_requested()
+    if current and current != profile_id and requested:
+        current_meta = _read_json(_profile_dir(current) / "profile.json")
+        current_name = current_meta.get("name", current) if current_meta else current
+        raise HTTPException(409, f"VPN connection '{current_name}' is active. Disconnect it before activating another connection.")
+    if str(meta.get("provider", "cyberghost")).lower() == "proton":
+        if meta.get("protocol") == "openvpn": required = ("openvpn.runtime.ovpn", "username", "password")
+        else: required = ("wireguard.conf",) if meta.get("configMethod") == "import" else ("wireguard_private_key",)
+        missing = [name for name in required if not _has(path / name)]
+    else:
+        missing = [name for name in ("username", "password", *REQUIRED) if not _has(path / name)]
     if missing:
         raise HTTPException(409, "VPN profile is incomplete: " + ", ".join(missing))
-    _refresh_runtime(profile_id)
+    if str(meta.get("provider", "cyberghost")).lower() == "cyberghost" and str(meta.get("protocol", "openvpn")).lower() == "openvpn":
+        _refresh_runtime(profile_id)
     _set_marker(ACTIVE_FILE, profile_id)
     _set_marker(NEXT_FILE, profile_id)
     gluetun = legacy._container(legacy.GLUETUN_CONTAINER)
@@ -551,6 +730,7 @@ def install(app) -> None:
     app.router.routes = [route for route in app.router.routes if getattr(route, "path", None) not in replace]
     app.add_api_route("/api/vpn/status", profile_status, methods=["GET"])
     app.add_api_route("/api/vpn/logs", profile_logs, methods=["GET"])
+    app.add_api_route("/api/vpn/providers", provider_catalog, methods=["GET"])
     app.add_api_route("/api/vpn/profiles", list_profiles, methods=["GET"])
     app.add_api_route("/api/vpn/profiles", create_profile, methods=["POST"], status_code=201)
     app.add_api_route("/api/vpn/profiles/{profile_id}", update_profile, methods=["PUT"])

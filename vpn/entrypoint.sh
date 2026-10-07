@@ -15,6 +15,7 @@ PIHOLE_DNS="${STREMIO_PIHOLE_DNS:-172.30.0.53}"
 DIRECT_DNS="${STREMIO_DIRECT_DNS_UPSTREAM:-1.1.1.1}"
 
 VPN_PID=""
+PORT_FORWARD_PID=""
 DNS_TCP_PID=""
 DNS_UDP_PID=""
 LOCAL_DNS_TCP_PID=""
@@ -48,7 +49,7 @@ sanitize_outbound_subnets() {
     for item in $input; do
         item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ -n "$item" ] || continue
-        if [ "$item" = "10.0.0.0/8" ]; then
+        if [ "$item" = "10.0.0.0/8" ] && [ "${PROFILE_PROVIDER:-cyberghost}" = "cyberghost" ]; then
             echo "[vpn] ignoring FIREWALL_OUTBOUND_SUBNETS entry 10.0.0.0/8 because CyberGhost uses 10.x tunnel addresses" >&2
             continue
         fi
@@ -70,6 +71,7 @@ prepare_runtime_config() {
         split(line, fields, /[ \t]+/)
         key=tolower(fields[1])
         if (key == "redirect-gateway" || key == "redirect-private") next
+        if (key == "up" || key == "down" || key == "route-up" || key == "route-pre-down" || key == "ipchange" || key == "learn-address" || key == "client-connect" || key == "client-disconnect" || key == "script-security") next
         lower=tolower(line)
         if (key == "pull-filter" && lower ~ /redirect-(gateway|private)/) next
         print original
@@ -197,32 +199,96 @@ prepare_profile() {
         return 1
     }
     PROFILE_DIR="$PROFILES_DIR/$PROFILE_ID"
-    for file in profile.json openvpn.runtime.ovpn ca.crt client.crt client.key username password; do
-        if [ ! -s "$PROFILE_DIR/$file" ]; then
-            echo "[vpn] selected profile '$PROFILE_ID' is incomplete: missing $file" >&2
-            return 1
-        fi
-    done
-
-    VPN_SERVICE_PROVIDER=custom
-    VPN_TYPE=openvpn
-    OPENVPN_CUSTOM_CONFIG="/tmp/stremio-openvpn.runtime.ovpn"
-    prepare_runtime_config "$PROFILE_DIR/openvpn.runtime.ovpn" "$OPENVPN_CUSTOM_CONFIG"
-    OPENVPN_USER=$(cat "$PROFILE_DIR/username")
-    OPENVPN_PASSWORD=$(cat "$PROFILE_DIR/password")
+    [ -s "$PROFILE_DIR/profile.json" ] || { echo "[vpn] selected profile '$PROFILE_ID' is missing profile.json" >&2; return 1; }
+    PROFILE_PROVIDER=$(sed -n 's/.*"provider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PROFILE_DIR/profile.json" | head -1 | tr '[:upper:]' '[:lower:]')
+    PROFILE_PROTOCOL=$(sed -n 's/.*"protocol"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PROFILE_DIR/profile.json" | head -1 | tr '[:upper:]' '[:lower:]')
+    PROFILE_PORT_FORWARDING=$(sed -n 's/.*"portForwarding"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$PROFILE_DIR/profile.json" | head -1)
     FIREWALL_OUTBOUND_SUBNETS="${FIREWALL_OUTBOUND_SUBNETS:-192.168.0.0/16,172.30.0.0/24}"
-    if [ -s "$PROFILE_DIR/firewall_outbound_subnets.txt" ]; then
-        FIREWALL_OUTBOUND_SUBNETS=$(sed -n '1p' "$PROFILE_DIR/firewall_outbound_subnets.txt" | tr -d '\r')
-    fi
+    [ ! -s "$PROFILE_DIR/firewall_outbound_subnets.txt" ] || FIREWALL_OUTBOUND_SUBNETS=$(sed -n '1p' "$PROFILE_DIR/firewall_outbound_subnets.txt" | tr -d '\r')
     FIREWALL_OUTBOUND_SUBNETS=$(sanitize_outbound_subnets "$FIREWALL_OUTBOUND_SUBNETS")
 
-    export VPN_SERVICE_PROVIDER VPN_TYPE OPENVPN_CUSTOM_CONFIG OPENVPN_USER OPENVPN_PASSWORD
+    if [ "$PROFILE_PROVIDER" = "proton" ] && [ "$PROFILE_PROTOCOL" = "wireguard" ]; then
+        PROFILE_CONFIG_METHOD=$(sed -n 's/.*"configMethod"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PROFILE_DIR/profile.json" | head -1)
+        VPN_TYPE=wireguard
+        if [ "$PROFILE_CONFIG_METHOD" = "import" ]; then
+            [ -s "$PROFILE_DIR/wireguard.conf" ] || { echo "[vpn] Proton profile '$PROFILE_ID' is missing wireguard.conf" >&2; return 1; }
+            VPN_SERVICE_PROVIDER=custom
+            WIREGUARD_PRIVATE_KEY=$(sed -n 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*//p' "$PROFILE_DIR/wireguard.conf" | head -1)
+            WIREGUARD_ADDRESSES=$(sed -n 's/^[[:space:]]*Address[[:space:]]*=[[:space:]]*//p' "$PROFILE_DIR/wireguard.conf" | head -1)
+            WIREGUARD_PUBLIC_KEY=$(sed -n 's/^[[:space:]]*PublicKey[[:space:]]*=[[:space:]]*//p' "$PROFILE_DIR/wireguard.conf" | head -1)
+            endpoint=$(sed -n 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*//p' "$PROFILE_DIR/wireguard.conf" | head -1)
+            WIREGUARD_ENDPOINT_IP=$(printf '%s' "$endpoint" | sed 's/:\([0-9][0-9]*\)$//' | tr -d '[]')
+            WIREGUARD_ENDPOINT_PORT=$(printf '%s' "$endpoint" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')
+            [ -n "$WIREGUARD_PRIVATE_KEY" ] && [ -n "$WIREGUARD_ADDRESSES" ] && [ -n "$WIREGUARD_PUBLIC_KEY" ] && [ -n "$WIREGUARD_ENDPOINT_IP" ] && [ -n "$WIREGUARD_ENDPOINT_PORT" ] || { echo "[vpn] Proton WireGuard import '$PROFILE_ID' is incomplete" >&2; return 1; }
+            export WIREGUARD_ADDRESSES WIREGUARD_PUBLIC_KEY WIREGUARD_ENDPOINT_IP WIREGUARD_ENDPOINT_PORT
+        else
+            [ -s "$PROFILE_DIR/wireguard_private_key" ] || { echo "[vpn] Proton profile '$PROFILE_ID' is missing WireGuard private key" >&2; return 1; }
+            VPN_SERVICE_PROVIDER=protonvpn
+            WIREGUARD_PRIVATE_KEY=$(cat "$PROFILE_DIR/wireguard_private_key")
+            SERVER_COUNTRIES=$(sed -n 's/.*"country"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PROFILE_DIR/profile.json" | head -1)
+            export SERVER_COUNTRIES
+        fi
+        export VPN_SERVICE_PROVIDER VPN_TYPE WIREGUARD_PRIVATE_KEY
+    elif [ "$PROFILE_PROVIDER" = "proton" ] && [ "$PROFILE_PROTOCOL" = "openvpn" ]; then
+        for file in openvpn.runtime.ovpn username password; do
+            [ -s "$PROFILE_DIR/$file" ] || { echo "[vpn] Proton OpenVPN profile '$PROFILE_ID' is incomplete: missing $file" >&2; return 1; }
+        done
+        VPN_SERVICE_PROVIDER=custom
+        VPN_TYPE=openvpn
+        OPENVPN_CUSTOM_CONFIG="/tmp/stremio-openvpn.runtime.ovpn"
+        prepare_runtime_config "$PROFILE_DIR/openvpn.runtime.ovpn" "$OPENVPN_CUSTOM_CONFIG"
+        OPENVPN_USER=$(cat "$PROFILE_DIR/username")
+        if [ "${PROFILE_PORT_FORWARDING:-false}" = "true" ]; then
+            case "$OPENVPN_USER" in *+pmp*) : ;; *) OPENVPN_USER="${OPENVPN_USER}+pmp" ;; esac
+        fi
+        OPENVPN_PASSWORD=$(cat "$PROFILE_DIR/password")
+        export VPN_SERVICE_PROVIDER VPN_TYPE OPENVPN_CUSTOM_CONFIG OPENVPN_USER OPENVPN_PASSWORD
+    else
+        for file in openvpn.runtime.ovpn ca.crt client.crt client.key username password; do
+            [ -s "$PROFILE_DIR/$file" ] || { echo "[vpn] selected profile '$PROFILE_ID' is incomplete: missing $file" >&2; return 1; }
+        done
+        VPN_SERVICE_PROVIDER=custom
+        VPN_TYPE=openvpn
+        OPENVPN_CUSTOM_CONFIG="/tmp/stremio-openvpn.runtime.ovpn"
+        prepare_runtime_config "$PROFILE_DIR/openvpn.runtime.ovpn" "$OPENVPN_CUSTOM_CONFIG"
+        OPENVPN_USER=$(cat "$PROFILE_DIR/username")
+        OPENVPN_PASSWORD=$(cat "$PROFILE_DIR/password")
+        export VPN_SERVICE_PROVIDER VPN_TYPE OPENVPN_CUSTOM_CONFIG OPENVPN_USER OPENVPN_PASSWORD
+    fi
     export FIREWALL_OUTBOUND_SUBNETS
-
-    printf '%s\n' "$PROFILE_ID" > "$ACTIVE_FILE.tmp"
-    chmod 600 "$ACTIVE_FILE.tmp"
-    mv -f "$ACTIVE_FILE.tmp" "$ACTIVE_FILE"
+    printf '%s\n' "$PROFILE_ID" > "$ACTIVE_FILE.tmp"; chmod 600 "$ACTIVE_FILE.tmp"; mv -f "$ACTIVE_FILE.tmp" "$ACTIVE_FILE"
     return 0
+}
+
+stop_port_forwarding() {
+    rm -f "$FORWARDED_PORT_FILE"
+    if [ -n "$PORT_FORWARD_PID" ]; then
+        kill "$PORT_FORWARD_PID" >/dev/null 2>&1 || true
+        wait "$PORT_FORWARD_PID" 2>/dev/null || true
+        PORT_FORWARD_PID=""
+    fi
+}
+
+start_proton_port_forwarding() {
+    stop_port_forwarding
+    [ "${PROFILE_PROVIDER:-}" = "proton" ] && [ "${PROFILE_PORT_FORWARDING:-false}" = "true" ] || return 0
+    command -v natpmpc >/dev/null 2>&1 || { echo "[vpn] Proton port forwarding requested but natpmpc is unavailable" >&2; return 1; }
+    (
+        while vpn_enabled; do
+            out=$(natpmpc -a 1 0 tcp 60 -g 10.2.0.1 2>&1 || true)
+            port=$(printf '%s\n' "$out" | sed -n 's/.*Mapped public port \([0-9][0-9]*\).*/\1/p' | head -1)
+            if [ -n "$port" ]; then
+                tmp="$FORWARDED_PORT_FILE.tmp"; printf '%s\n' "$port" > "$tmp"; chmod 600 "$tmp"; mv -f "$tmp" "$FORWARDED_PORT_FILE"
+                natpmpc -a "$port" "$port" udp 60 -g 10.2.0.1 >/dev/null 2>&1 || true
+                echo "[vpn] Proton NAT-PMP lease active on port $port (TCP/UDP)"
+            else
+                rm -f "$FORWARDED_PORT_FILE"
+                echo "[vpn] Proton NAT-PMP lease unavailable; remaining VPN-only without inbound forwarding" >&2
+            fi
+            sleep 45
+        done
+    ) &
+    PORT_FORWARD_PID=$!
 }
 
 start_vpn_child() {
@@ -254,6 +320,7 @@ start_vpn_child() {
         fi
         if nc -z -w 1 127.0.0.1 53 >/dev/null 2>&1; then
             start_dns_proxy 127.0.0.1
+            start_proton_port_forwarding || true
             echo "[vpn] Gluetun DNS resolver ready"
             return 0
         fi
@@ -266,7 +333,7 @@ start_vpn_child() {
 }
 
 stop_vpn_child_for_direct() {
-    rm -f "$FORWARDED_PORT_FILE"
+    stop_port_forwarding
     if [ -n "$VPN_PID" ]; then
         echo "[vpn] disabling VPN; returning gateway to direct mode"
         kill -TERM "$VPN_PID" >/dev/null 2>&1 || true
@@ -281,6 +348,7 @@ stop_vpn_child_for_direct() {
 
 cleanup() {
     rm -f "$READY_FILE"
+    stop_port_forwarding
     stop_dns_proxy
     stop_local_dns_proxy
     if [ -n "$VPN_PID" ]; then
@@ -309,6 +377,7 @@ while :; do
     if vpn_enabled; then
         if [ -n "$VPN_PID" ] && [ -s "$NEXT_FILE" ]; then
             echo "[vpn] connection change requested; recycling VPN child without restarting gateway container"
+            stop_port_forwarding
             kill -TERM "$VPN_PID" >/dev/null 2>&1 || true
             wait "$VPN_PID" 2>/dev/null || true
             VPN_PID=""
