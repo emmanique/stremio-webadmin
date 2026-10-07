@@ -61,6 +61,7 @@ services:
     network_mode: "service:gluetun"
     environment:
       STREMIOSRV_BT_LISTEN_PORT: "${STREMIOSRV_BT_LISTEN_PORT:-6881}"
+      STREMIOSRV_BT_AUTO_PORT_FILE: /vpn/forwarded_port
       STREMIOSRV_HOST_MIN_FREE_GB: "${STREMIOSRV_HOST_MIN_FREE_GB:-10}"
       STREMIOSRV_HOST_MIN_FREE_PERCENT: "${STREMIOSRV_HOST_MIN_FREE_PERCENT:-10}"
       STREMIOSRV_CACHE_ROOT: /root/.stremio-server
@@ -92,6 +93,7 @@ services:
     volumes:
       - ${STREMIO_DATA_DIR:-stremio-cache}:/root/.stremio-server
       - stremio-config:/config:ro
+      - vpn-data:/vpn:ro
       # Keep Stremio DNS independent from Gluetun's /etc/resolv.conf.
       # The containers share a network namespace, not a mount namespace.
       # Pi-hole then forwards upstream through Gluetun :1053.

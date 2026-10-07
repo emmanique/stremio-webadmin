@@ -8,7 +8,11 @@ surfaces the signals the admin page needs to tell the owner whether 6881 is open
 - portMap: whether the router auto-forwarded the port via UPnP/NAT-PMP.
 - listenPort / peers: context.
 """
+import os
+
 from fastapi import APIRouter, Request
+
+from stremiosrv.torrent.auto_port import desired_port
 
 router = APIRouter()
 
@@ -24,8 +28,13 @@ def netcheck(request: Request) -> dict:
     eng = _engine(request)
     if eng is None:
         return {"listenPort": None, "peers": 0, "inboundPeers": 0, "portMap": dict(_CLOSED_PORTMAP)}
+    default_port = int(os.getenv("STREMIOSRV_BT_LISTEN_PORT", "6881"))
+    desired, auto_mode = desired_port(default_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", ""))
+    actual = eng.listen_port()
     return {
-        "listenPort": eng.listen_port(),
+        "listenPort": actual,
+        "listenPortMode": "vpn-forwarded" if auto_mode == "vpn-forwarded" and actual == desired else ("direct/default" if actual == default_port else "runtime"),
+        "configuredDefaultPort": default_port,
         "peers": eng.peer_count(),
         "inboundPeers": eng.inbound_peer_count(),
         "portMap": eng.portmap_status(),

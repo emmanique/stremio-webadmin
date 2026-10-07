@@ -255,6 +255,12 @@ def build_app() -> FastAPI:
         enable_upnp=settings.enable_upnp,
     )
     engine.load_pins_into_session()
+    from stremiosrv.torrent.auto_port import run_auto_port_watcher
+    threading.Thread(
+        target=run_auto_port_watcher,
+        args=(engine, settings.bt_listen_port, os.getenv("STREMIOSRV_BT_AUTO_PORT_FILE", "")),
+        daemon=True,
+    ).start()
     converter = Converter(settings.cache_root, settings.transcode_profile)
     # Every transcode directory on disk right now belongs to a process that no longer exists, so
     # this sweep takes no grace. Without it a crash or a `docker restart` orphans the whole segment

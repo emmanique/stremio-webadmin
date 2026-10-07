@@ -8,6 +8,7 @@ STARTUP_FILE="$CONFIG_DIR/startup_profile"
 NEXT_FILE="$CONFIG_DIR/next_profile"
 ENABLED_FILE="${STREMIO_VPN_ENABLED_FILE:-$CONFIG_DIR/enabled}"
 READY_FILE="/tmp/stremio-vpn-supervisor.ready"
+FORWARDED_PORT_FILE="$CONFIG_DIR/forwarded_port"
 DNS_PORT="${STREMIO_DNS_PROXY_PORT:-1053}"
 LOCAL_DNS_PORT="${STREMIO_LOCAL_DNS_PORT:-53}"
 PIHOLE_DNS="${STREMIO_PIHOLE_DNS:-172.30.0.53}"
@@ -226,6 +227,7 @@ prepare_profile() {
 
 start_vpn_child() {
     prepare_profile || return 1
+    rm -f "$FORWARDED_PORT_FILE"
     stop_dns_proxy
     stop_local_dns_proxy
     cleanup_stale_dns_proxies
@@ -264,6 +266,7 @@ start_vpn_child() {
 }
 
 stop_vpn_child_for_direct() {
+    rm -f "$FORWARDED_PORT_FILE"
     if [ -n "$VPN_PID" ]; then
         echo "[vpn] disabling VPN; returning gateway to direct mode"
         kill -TERM "$VPN_PID" >/dev/null 2>&1 || true
@@ -295,6 +298,7 @@ DIRECT_DEFAULT=$(ip route show default 2>/dev/null | sed -n '1p' || true)
 # DIRECT is a normal supported state. The container and namespace remain alive
 # so Stremio configuration saves/restarts never depend on VPN availability.
 restore_direct_network
+rm -f "$FORWARDED_PORT_FILE"
 cleanup_stale_dns_proxies
 start_dns_proxy "$DIRECT_DNS"
 start_local_dns_proxy

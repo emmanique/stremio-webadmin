@@ -17,8 +17,8 @@ Current platform release:
 
 ```text
 Upstream Core   1.6.34
-Fork/Platform   3.0.11
-WebAdmin        3.0.11
+Fork/Platform   3.0.12
+WebAdmin        3.0.12
 VPN Gateway     3.0.6
 ```
 

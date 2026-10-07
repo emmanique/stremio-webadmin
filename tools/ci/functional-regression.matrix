@@ -101,6 +101,7 @@ tests/test_library_state.py
 tests/test_stremio_api.py
 
 [vpn-network]
+tests/test_auto_bt_port.py
 tests/test_cert_reuse.py
 tests/test_certcheck.py
 tests/test_netcheck_api.py

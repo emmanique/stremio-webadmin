@@ -1,10 +1,10 @@
 <div align="center">
 
-# Stremio Server WebAdmin 3.0.11
+# Stremio Server WebAdmin 3.0.12
 
 ### Self-hosted Stremio streaming with WebAdmin, GPU transcoding, VPN, Pi-hole and Library management
 
-[![Platform](https://img.shields.io/badge/platform-3.0.11-7c3aed)](docs/releases/v3.0.11.md)
+[![Platform](https://img.shields.io/badge/platform-3.0.12-7c3aed)](docs/releases/v3.0.12.md)
 [![Core](https://img.shields.io/badge/Stremio_Core-1.6.34-5b21b6)](SERVER_VERSION)
 ![Upstream](https://img.shields.io/badge/upstream-aligned-2563eb)
 ![Fork](https://img.shields.io/badge/fork-enhanced-7c3aed)
@@ -14,14 +14,14 @@
 
 **Run your own Stremio streaming backend with a browser-based administration interface, automatic hardware acceleration, optional VPN routing and integrated DNS filtering.**
 
-[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.11.md)
+[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.12.md)
 
 </div>
 
 ---
 
 <p align="center">
-  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.11 dashboard">
+  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.12 dashboard">
 </p>
 
 ## ✨ Highlights
@@ -57,7 +57,7 @@ It exposes operational status, active streams, configuration, component versions
 </tr>
 </table>
 
-The screenshots above are real views of WebAdmin 3.0.11. The current DEV baseline is validated against Stremio Core 1.6.34.
+The screenshots above are real views of WebAdmin 3.0.12. The current DEV baseline is validated against Stremio Core 1.6.34.
 
 ## 🚀 What makes this fork different?
 
@@ -240,8 +240,8 @@ Preserve the existing `.env` and persistent volumes. **Do not use `docker compos
 
 | Component | Development baseline |
 |---|---:|
-| Fork / Platform | **3.0.11** |
-| WebAdmin | **3.0.11** |
+| Fork / Platform | **3.0.12** |
+| WebAdmin | **3.0.12** |
 | Upstream Server/Core | **1.6.34** |
 | VPN Gateway image | **3.0.10** |
 

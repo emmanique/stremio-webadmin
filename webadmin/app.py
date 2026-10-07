@@ -43,7 +43,7 @@ RESTART_STATE = {"status": "idle", "detail": "", "startedAtBefore": None, "start
 
 DESCRIPTIONS = {
     "http_port": "Porta HTTP interna da API do servidor Stremio.",
-    "bt_listen_port": "Porta TCP/UDP usada para receber ligações BitTorrent.",
+    "bt_listen_port": "Porta BitTorrent efetiva, gerida automaticamente: 6881 em DIRECT/sem forwarding ou a porta encaminhada pelo provider VPN.",
     "enable_upnp": "Solicita ao router a abertura automática da porta BitTorrent.",
     "cache_root": "Directório persistente da cache, certificados e estado do Stremio.",
     "cert_file": "Ficheiro PEM com o certificado TLS e a chave privada.",
@@ -139,7 +139,7 @@ MINUTES = {
     "transcode_gc_max_age",
     "adaptive_interval",
 }
-READ_ONLY = {"http_port", "cache_root", "cert_file"}
+READ_ONLY = {"http_port", "bt_listen_port", "cache_root", "cert_file"}
 
 
 class Values(BaseModel):
@@ -439,6 +439,7 @@ def github_version():
 @app.get("/api/config")
 def config():
     values = DEFAULTS | read_config()
+    netcheck = get_json("/netcheck.json", {})
     items = []
     for name, value in values.items():
         kind = (
@@ -452,9 +453,9 @@ def config():
             {
                 "name": name,
                 "value": value,
-                "displayValue": value / 60 if name in MINUTES else value,
+                "displayValue": (netcheck.get("listenPort", value) if name == "bt_listen_port" else (value / 60 if name in MINUTES else value)),
                 "type": kind,
-                "description": DESCRIPTIONS.get(name, ""),
+                "description": (DESCRIPTIONS.get(name, "") + (f" Estado: {str(netcheck.get('listenPortMode', 'unknown')).upper()}." if name == "bt_listen_port" else "")),
                 "unit": "minutes" if name in MINUTES else None,
                 "inputScale": 60 if name in MINUTES else 1,
                 "editable": name not in READ_ONLY,

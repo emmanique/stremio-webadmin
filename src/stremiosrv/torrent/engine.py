@@ -1440,6 +1440,21 @@ class Engine:
         """The actual TCP port the session is listening on (0 if not yet listening)."""
         return self._ses.listen_port()
 
+    def set_listen_port(self, port: int) -> bool:
+        """Move the libtorrent listener to *port* without restarting the server.
+
+        Used by the VPN automatic-port watcher.  The session keeps torrents and
+        peer state; only the listen interfaces are changed.
+        """
+        port = int(port)
+        if not 1 <= port <= 65535:
+            raise ValueError("BitTorrent listen port must be between 1 and 65535")
+        if self.listen_port() == port:
+            return False
+        self._ses.apply_settings({"listen_interfaces": f"0.0.0.0:{port},[::]:{port}"})
+        self._portmap = {"mapped": False, "transport": None, "externalPort": None}
+        return True
+
     def peer_count(self) -> int:
         """Total peers connected across all torrents."""
         return sum(h.status().num_peers for h in self._torrents.values())
