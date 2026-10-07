@@ -44,7 +44,7 @@ RESTART_STATE = {"status": "idle", "detail": "", "startedAtBefore": None, "start
 DESCRIPTIONS = {
     "http_port": "Porta HTTP interna da API do servidor Stremio.",
     "bt_listen_port": "Porta BitTorrent efetiva, gerida automaticamente: 6881 em DIRECT/sem forwarding ou a porta encaminhada pelo provider VPN.",
-    "enable_upnp": "Solicita ao router a abertura automática da porta BitTorrent.",
+    "enable_upnp": "Estado UPnP/NAT-PMP do Core (somente consulta). Em VPN, o inbound depende do port forwarding do provider; em DIRECT aplica-se o comportamento padrão do Core.",
     "cache_root": "Directório persistente da cache, certificados e estado do Stremio.",
     "cert_file": "Ficheiro PEM com o certificado TLS e a chave privada.",
     "cache_size": "Limite máximo reservado para a cache de conteúdos.",
@@ -139,7 +139,7 @@ MINUTES = {
     "transcode_gc_max_age",
     "adaptive_interval",
 }
-READ_ONLY = {"http_port", "bt_listen_port", "cache_root", "cert_file"}
+READ_ONLY = {"http_port", "bt_listen_port", "enable_upnp", "cache_root", "cert_file"}
 
 
 class Values(BaseModel):
