@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import socket
+import threading
 import time
 import uuid
 
@@ -35,6 +36,9 @@ def partfile_hash(name: str) -> str | None:
 PROTECTED = frozenset({
     "certificates.pem",
     "httpsCert.json",
+    # Certificate acquisition/retry state written by docker/cert-status.sh (Core 1.6.34).
+    # Infrastructure metadata is neither media nor evictable cache content.
+    "cert-status.json",
     "server-settings.json",
     ".server-settings.json.swp",
     "stremio-cache",
@@ -70,6 +74,9 @@ _TOKEN = uuid.uuid4().hex  # this process's identity, minted once per interprete
 # A restart mints a new token but keeps the hostname, and a container's own dead process is not a
 # rival -- without this the survivor of a restart locks itself out of its own cache root.
 _HOST = os.getenv("STREMIOSRV_CACHE_OWNER_ID") or socket.gethostname()
+# Serialize claim/release and prevent this process reclaiming a root after graceful shutdown.
+_claim_lock = threading.Lock()
+_released: set[str] = set()
 
 
 def read_owner(root: str) -> dict | None:
@@ -88,13 +95,29 @@ def write_owner(root: str, token: str | None = None, now: float | None = None) -
     rec = {"token": token or _TOKEN, "host": _HOST, "pid": os.getpid(),
            "heartbeat": now or time.time()}
     path = os.path.join(root, OWNER_FILE)
-    try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(rec, f)
-        os.replace(tmp, path)
-    except OSError as e:
-        logger.warning("could not claim cache root %s: %s", root, e)
+    with _claim_lock:
+        if root in _released:
+            return
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rec, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            logger.warning("could not claim cache root %s: %s", root, e)
+
+
+def release_owner(root: str) -> None:
+    """Give `root` back as this server stops, so the next one evicts from its first pass. Only our
+    own claim is removed: a rival's is left exactly as it is."""
+    with _claim_lock:
+        _released.add(root)
+        rec = read_owner(root)
+        if rec and rec.get("token") == _TOKEN:
+            try:
+                os.remove(os.path.join(root, OWNER_FILE))
+            except OSError as e:
+                logger.warning("could not release cache root %s: %s", root, e)
 
 
 def evictor_may_run(root: str, stale_after: float) -> tuple[bool, dict | None]:
@@ -226,6 +249,12 @@ def scan_cache(root: str, protected: frozenset[str] = PROTECTED) -> list[dict]:
     return items
 
 
+def transcode_used(root: str) -> int:
+    """Bytes reserved by transcode output, without querying filesystem capacity."""
+    used, _ = _stat_tree(os.path.join(root, "transcode"))
+    return used
+
+
 def usage(root: str, budget: int) -> dict:
     """Cache footprint vs budget + free disk — for the appliance suggestion advisor.
 
@@ -241,7 +270,7 @@ def usage(root: str, budget: int) -> dict:
     the difference. `diskFree`/`diskTotal` showed the symptom; this names the cause.
     """
     used = sum(i["size"] for i in scan_cache(root))
-    transcode, _ = _stat_tree(os.path.join(root, "transcode"))
+    transcode = transcode_used(root)
     try:
         du = shutil.disk_usage(root)
         free, total = du.free, du.total
@@ -249,6 +278,7 @@ def usage(root: str, budget: int) -> dict:
         free, total = 0, 0
     return {
         "cacheUsed": used, "cacheSize": budget, "transcodeUsed": transcode,
+        "reservedUsed": used + transcode,
         "diskFree": free, "diskTotal": total,
     }
 
@@ -318,18 +348,20 @@ def evict_once(root: str, budget: int, engine=None, grace: int = 300) -> dict:
     # its name matches no torrent.
     keep_hashes |= {name_hash[n] for n in list(in_use) if n in name_hash}
     in_use |= {f".{ih}.parts" for ih in keep_hashes if ih}
-    victims = select_evictions(items, budget, frozenset(in_use))
+    transcode_used, _ = _stat_tree(os.path.join(root, "transcode"))
+    media_budget = max(0, budget - transcode_used)
+    victims = select_evictions(items, media_budget, frozenset(in_use))
     # Over budget and nothing may be deleted. Previously this pass just did nothing and said
     # nothing, so the cache could sit above its budget indefinitely while the log looked idle —
     # and the bigger `grace` is, the likelier that becomes, because more items are protected.
     # It is not an error (protecting a stream is the correct call), but it must be visible: the
     # next thing that happens is the disk filling up.
-    if total > budget and not victims:
+    if total > media_budget and not victims:
         held = sum(i["size"] for i in items if i["name"] in in_use)
         logger.warning(
             "over budget by %.1f GiB and nothing is evictable: %d of %d items protected "
             "(%.1f GiB) by grace=%ss or pins — cache will stay over budget until one ages out",
-            (total - budget) / 1073741824, len(in_use), len(items), held / 1073741824, grace,
+            (total - media_budget) / 1073741824, len(in_use), len(items), held / 1073741824, grace,
         )
     deleted = []
     for v in victims:
@@ -473,6 +505,8 @@ def run_evictor(root: str, budget: int, engine=None, interval: int = 60, grace: 
     blocked = False
     while True:
         time.sleep(interval)  # sleep first: let active streams re-register after a restart
+        if root in _released:  # the server is stopping and has given the root back
+            return
         # Re-checked every cycle rather than once at startup, and it doubles as the heartbeat on
         # our own claim. Giving up permanently turned an overlap of a few minutes into an evictor
         # that never ran again for the life of the process -- and a cache stuck over budget with

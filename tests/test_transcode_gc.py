@@ -253,8 +253,8 @@ def test_a_segment_request_keeps_a_transcode_alive(tmp_path):
     assert conv.reap_idle(300) == []
 
 
-def test_reaping_ignores_a_job_whose_process_already_exited(tmp_path):
-    """An exited encoder is not terminated again by the idle reaper."""
+def test_reaping_detaches_a_job_whose_process_already_exited(tmp_path):
+    """An exited encoder is reaped from bookkeeping without terminating it again."""
     conv = Converter(str(tmp_path), None)
     key, _, p = _tracked_workload(
         conv,
@@ -263,8 +263,43 @@ def test_reaping_ignores_a_job_whose_process_already_exited(tmp_path):
     )
     conv._seen[key] -= 600
 
-    assert conv.reap_idle(300) == []
+    assert conv.reap_idle(300) == ["finished"]
     assert not p.terminated
+    assert key not in conv._jobs
+    assert not (conv.base / key).exists()
+
+
+def test_end_waits_after_killing_a_stubborn_encoder(tmp_path):
+    """A SIGKILLed ffmpeg child must be waited so it cannot remain defunct."""
+    import subprocess
+
+    conv = Converter(str(tmp_path), None)
+
+    class StubbornProc:
+        def __init__(self):
+            self.wait_calls = 0
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("ffmpeg", timeout)
+            return -9
+
+        def kill(self):
+            self.killed = True
+
+    proc = StubbornProc()
+    conv._end(proc)
+
+    assert proc.killed is True
+    assert proc.wait_calls == 2
 
 
 def test_an_untouched_job_is_reaped_rather_than_living_forever(tmp_path):

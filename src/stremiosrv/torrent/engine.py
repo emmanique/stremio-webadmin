@@ -1041,8 +1041,13 @@ class Engine:
         pinned_remaining = sum(self._remaining_bytes(self._torrents[p])
                                for p in self._pinned if p in self._torrents and p != ih)
         candidate_remaining = self._pin_remaining(h)
-        if not pinsmod.pin_fits(free, pinned_remaining, candidate_remaining, self._cache_size):
-            needed = pinsmod.headroom(self._cache_size) + pinned_remaining + candidate_remaining
+        used = sum(i["size"] for i in cachemod.scan_cache(self._cache_root))
+        transcode_used = cachemod.transcode_used(self._cache_root)
+        reserved_used = used + transcode_used
+        if not pinsmod.pin_fits(free, pinned_remaining, candidate_remaining, self._cache_size,
+                                cache_used=reserved_used):
+            needed = (pinsmod.headroom(self._cache_size, cache_used=reserved_used)
+                      + pinned_remaining + candidate_remaining)
             raise PinSpaceError(needed, free)
         self._pinned.add(ih)
         h.pinned = True
@@ -1088,6 +1093,34 @@ class Engine:
         would have looked like it did nothing.
         """
         return self._status_for(set(self._pinned) | set(self._wanted))
+
+    def held_status(self) -> dict[str, dict]:
+        """Whether each torrent the session holds but nobody tracks is still arriving, by infohash.
+
+        Playback fills a torrent without the library tracking it, and keeps filling it at idle
+        priority after the player stops (see Handle._priorities). The library read every such
+        torrent as idle and complete, so a film the player was halfway into sat on its Downloaded
+        shelf. Cheap on purpose -- one status() per torrent, no per-file stats: live_files does
+        that work, and the library asks for both on every refresh.
+        """
+        tracked = set(self._pinned) | set(self._wanted)
+        out: dict[str, dict] = {}
+        for ih, h in list(self._torrents.items()):  # a copy: request threads add torrents
+            if ih in tracked or not h.has_metadata():
+                continue
+            st = h.status()
+            out[ih] = {
+                "state": "seeding" if h.is_finished() else "downloading",
+                "progress": round(st.progress, 4),
+                "downloadSpeed": st.download_rate,
+                "uploadSpeed": st.upload_rate,
+                "peers": st.num_peers,
+                "seeds": st.num_seeds,
+                # A stream is open on it right now, as opposed to filling in the background.
+                "playing": h.is_active(),
+            }
+        return out
+
 
     def pinned_status(self) -> list[dict]:
         """Only the kept titles -- what /pins.json has always meant."""

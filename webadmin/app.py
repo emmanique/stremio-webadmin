@@ -401,6 +401,7 @@ def status():
             "cacheSize": cache.get("cacheSize", config["cache_size"]),
             "diskFree": cache.get("diskFree", 0),
             "transcodeUsed": cache.get("transcodeUsed", 0),
+            "reservedUsed": cache.get("reservedUsed", cache.get("cacheUsed", 0) + cache.get("transcodeUsed", 0)),
         },
         "performance": perf,
         "updates": {

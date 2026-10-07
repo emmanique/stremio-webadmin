@@ -16,9 +16,9 @@ The current server release is tracked by `SERVER_VERSION` / `FORK_VERSION`, WebA
 Current platform release:
 
 ```text
-Upstream Core   1.6.27
-Fork/Platform   3.0.10
-WebAdmin        3.0.10
+Upstream Core   1.6.34
+Fork/Platform   3.0.11
+WebAdmin        3.0.11
 VPN Gateway     3.0.6
 ```
 

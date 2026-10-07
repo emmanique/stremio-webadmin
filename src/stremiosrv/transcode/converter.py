@@ -561,12 +561,13 @@ class Converter:
 
         with self._lock:
             for key, proc in list(self._jobs.items()):
-                if proc.poll() is not None:
-                    continue
-
+                exited = proc.poll() is not None
                 last_seen = self._seen.get(key, 0.0)
 
-                if now - last_seen < idle_after:
+                # poll() reaps an exited child, but its registry/filesystem
+                # bookkeeping must also be detached. Otherwise dead encoders
+                # remain addressable forever and stale output can be reused.
+                if not exited and now - last_seen < idle_after:
                     continue
 
                 # Detach atomically. Once removed from the registry, a new
@@ -622,6 +623,10 @@ class Converter:
             p.wait(timeout=self.STOP_TIMEOUT)
         except subprocess.TimeoutExpired:
             p.kill()
+            # A killed child remains a zombie until its parent reaps it.
+            # Always wait after kill so long-lived Uvicorn workers do not
+            # accumulate defunct ffmpeg processes.
+            p.wait()
 
     def _stop_workload_if_orphaned(self, key: str) -> bool:
         """Stop key only if no alias acquired it after the caller unlocked.

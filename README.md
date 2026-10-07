@@ -4,22 +4,24 @@
 
 ### Self-hosted Stremio streaming with WebAdmin, GPU transcoding, VPN, Pi-hole and Library management
 
-[![Platform](https://img.shields.io/badge/platform-3.0.10-7c3aed)](docs/releases/v3.0.10.md)
-[![Core](https://img.shields.io/badge/Stremio_Core-1.6.27-5b21b6)](SERVER_VERSION)
+[![Platform](https://img.shields.io/badge/platform-3.0.11-7c3aed)](docs/releases/v3.0.11.md)
+[![Core](https://img.shields.io/badge/Stremio_Core-1.6.34-5b21b6)](SERVER_VERSION)
+![Upstream](https://img.shields.io/badge/upstream-aligned-2563eb)
+![Fork](https://img.shields.io/badge/fork-enhanced-7c3aed)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](compose.yaml)
 [![GPU](https://img.shields.io/badge/GPU-VAAPI%20%7C%20NVENC-76B900)](#automatic-gpu-transcoding)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **Run your own Stremio streaming backend with a browser-based administration interface, automatic hardware acceleration, optional VPN routing and integrated DNS filtering.**
 
-[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.10.md)
+[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.11.md)
 
 </div>
 
 ---
 
 <p align="center">
-  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.10 dashboard">
+  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.11 dashboard">
 </p>
 
 ## ✨ Highlights
@@ -55,7 +57,7 @@ It exposes operational status, active streams, configuration, component versions
 </tr>
 </table>
 
-The screenshots above are real views of WebAdmin 3.0.10 running with Stremio Core 1.6.27.
+The screenshots above are real views of WebAdmin 3.0.11. The current DEV baseline is validated against Stremio Core 1.6.34.
 
 ## 🚀 What makes this fork different?
 
@@ -92,6 +94,22 @@ Pi-hole is the normal DNS layer for the streaming stack in both modes.
 ### Library and playback continuity
 
 The Library addon exposes cached content back to Stremio, supports Pin/Keep workflows and learns the relationship between Stremio media IDs and cached torrents. Playback position remains authoritative in Stremio Core rather than being duplicated in another progress database.
+
+## 🔄 Upstream evolution and fork enhancements
+
+The project tracks the upstream `stremio-libtorrent-server` Core while preserving WebAdmin and playback behaviour that has already been validated in this fork. Upstream changes are reviewed selectively: equivalent changes are aligned, stronger upstream implementations replace or improve ours, and fork-specific behaviour is retained when it provides broader functionality.
+
+| Area | Core 1.6.34 evolution | This fork / WebAdmin | Integration policy |
+|---|---|---|---|
+| **Subtitles** | Adds stricter stream parsing and correct `fileIdx=-1` resolution. | Adds HLS WebVTT windows, timestamp rebasing, streaming extraction and resume-aware subtitle handling. | **Combined** — upstream `-1` semantics with the fork's richer HLS subtitle path. |
+| **Library playback state** | Distinguishes torrents still being filled by playback from genuinely downloaded content. | Adds Watch/deep-link actions, Stremio metadata mapping, Continue Watching and cross-player continuity. | **Combined** — upstream state accuracy plus fork playback integration. |
+| **Playback observability** | Core health and runtime status. | Adds `playbackActivity`, active sessions/streams and FFmpeg/transcoding visibility in WebAdmin. | **Fork enhanced** — retained as additional telemetry. |
+| **Cache / Keep** | Improves disk headroom calculation and graceful cache-owner release. | Preserves Pin/Keep workflows and persistent cache management. | **Upstream improved** — adopted where safer and more accurate. |
+| **TLS certificates** | Adds bounded certificate fetch, reuse, retry and `cert-status.json` health reporting. | Exposes health through the coordinated platform runtime. | **Upstream improved** — adopted in full while preserving fork startup patches. |
+| **Transcoding** | Core remains authoritative for COPY vs TRANSCODE. | AUTO-only backend selection, VAAPI/NVENC/CPU fallback, HDR→SDR path and FFmpeg lifecycle controls. | **Fork enhanced** — upstream decision authority is preserved; the fork improves execution and observability. |
+| **Continue Watching** | Uses the Stremio/Core playback model. | Patches player startup/deep-links and service-worker revisioning for App ↔ Web resume continuity. | **Fork enhanced** — retained because it covers the integrated Web Player workflow. |
+
+This distinction is intentional: **Core version** identifies the upstream-derived server baseline, while **Platform/WebAdmin version** identifies the additional integration, administration, playback and deployment capabilities maintained by this project.
 
 ## 🧱 Runtime architecture
 
@@ -222,9 +240,9 @@ Preserve the existing `.env` and persistent volumes. **Do not use `docker compos
 
 | Component | Development baseline |
 |---|---:|
-| Fork / Platform | **3.0.10** |
-| WebAdmin | **3.0.10** |
-| Upstream Server/Core | **1.6.27** |
+| Fork / Platform | **3.0.11** |
+| WebAdmin | **3.0.11** |
+| Upstream Server/Core | **1.6.34** |
 | VPN Gateway image | **3.0.10** |
 
 Versioning is intentionally independent: the platform/WebAdmin version identifies this fork, while the embedded Server/Core keeps its upstream-derived version.

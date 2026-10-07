@@ -101,12 +101,13 @@ def test_cache_usage(tmp_path):
     u = usage(str(tmp_path), budget=10000)
     assert u["cacheUsed"] == 5000
     assert u["cacheSize"] == 10000
+    assert u["reservedUsed"] == 5000
     assert u["diskTotal"] > 0 and u["diskFree"] >= 0
 
 
 def test_cache_usage_missing_dir_is_safe():
     assert usage("/no/such/dir", budget=42) == {
-        "cacheUsed": 0, "cacheSize": 42, "transcodeUsed": 0, "diskFree": 0, "diskTotal": 0,
+        "cacheUsed": 0, "cacheSize": 42, "transcodeUsed": 0, "reservedUsed": 0, "diskFree": 0, "diskTotal": 0,
     }
 
 

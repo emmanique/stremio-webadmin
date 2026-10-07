@@ -117,12 +117,19 @@ def decode_subtitle(raw: bytes) -> str:
 # playable file for me"; playback.serve() resolves it through GuessFileIdx.
 # Keep that signed index intact here so HLS/subtitle routes preserve the
 # same public stream-URL contract.
-_STREAM_RE = re.compile(r"/([0-9a-fA-F]{40})/(-?\d+)(?:[/?#]|$)")
+_STREAM_RE = re.compile(r"/([0-9a-fA-F]{40})/(-1|\d+)(?=[/?#]|$)")
 
 
 def parse_stream_url(url: str) -> tuple[str, int] | None:
     m = _STREAM_RE.search(url)
     return (m.group(1).lower(), int(m.group(2))) if m else None
+
+def stream_file_idx(h, idx: int) -> int:
+    """Resolve Core's -1 stream index to the same file playback serves."""
+    if idx >= 0:
+        return idx
+    from stremiosrv.api import playback
+    return playback._guess(h, {})
 
 
 def srt_to_vtt(text: str) -> str:
@@ -299,7 +306,8 @@ def opensub_hash(request: Request, videoUrl: str | None = None, mediaURL: str | 
         end = time.time() + 20
         while not h.has_metadata() and time.time() < end:
             time.sleep(0.2)
-        if h.has_metadata() and _ensure_edges(h, idx):
+        idx = stream_file_idx(h, idx) if h.has_metadata() else -1
+        if idx >= 0 and _ensure_edges(h, idx):
             hsh, size = opensubtitles_hash_and_size(file_disk_path(eng.save_path(), h, idx))
             return {"error": None, "result": {"size": size, "hash": hsh}}
         return {"error": None, "result": None}  # couldn't resolve in time -> client falls back to filename
@@ -532,6 +540,12 @@ def subtitles_vtt_guessed(
         mpegtsStart=mpegtsStart,
         **({"timelineOffset": timelineOffset} if timelineOffset else {}),
     )
+
+
+
+@router.get("/{info_hash}/-1/subtitles.json")
+def subtitles_list_guessed(info_hash: str, mediaURL: str, request: Request) -> dict:
+    return subtitles_list(info_hash, -1, mediaURL, request)
 
 
 @router.get("/{info_hash}/{idx:int}/subtitles.vtt")

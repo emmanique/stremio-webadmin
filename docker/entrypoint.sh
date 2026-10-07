@@ -20,23 +20,29 @@ if [ -n "${IPADDRESS}" ]; then
     # A trusted cert we already hold and that still has a month to run is kept: the cert service is
     # not called on every restart, and a box that is briefly offline still comes up trusted.
     # Anything the check cannot settle falls through to the fetch below, unchanged.
+    CERT_STATE=ok; CERT_REASON=""; CERT_DETAIL=""
     if sh /srv/app/docker/cert-reuse.sh "$CERT" "$SROCKS_ZONE"; then
         echo "[entrypoint] trusted cert on disk is still valid -> keeping it, no fetch"
         HAVE_SROCKS=1
     else
         echo "[entrypoint] IPADDRESS=$IPADDRESS -> fetching trusted stremio.rocks cert"
-        # Time-box the fetch: on an offline / isolated (LAN-only, static-IP) network it would
-        # otherwise hang on DNS/HTTP timeouts and block uvicorn from ever starting. On timeout we
-        # fall through to the existing/self-signed cert so the server still comes up on the LAN.
-        FETCHED_CERT="/srv/stremio-server/certificates.pem"
-        rm -f "$FETCHED_CERT"
-
-        if (cd /srv/stremio-server && timeout 30 node certificate.js --action fetch) \
-           && [ -s "$FETCHED_CERT" ]; then
-            cp "$FETCHED_CERT" "$CERT"
+        # Time-boxed, and judged by the certificate it installs rather than by its exit code (see
+        # cert-fetch.sh). When it fails -- an offline LAN, or the certificate service down -- it says
+        # why, a trusted certificate already here is kept for as long as it is valid at all, and the
+        # retry loop below keeps asking every half hour.
+        if FETCH_OUT=$(sh /srv/app/docker/cert-fetch.sh "$CERT" "$SROCKS_ZONE"); then
             HAVE_SROCKS=1
         else
-            echo "[entrypoint] stremio.rocks fetch failed or produced no certificate -> falling back to existing/self-signed cert"
+            CERT_REASON=$(printf '%s' "$FETCH_OUT" | cut -f1)
+            CERT_DETAIL=$(printf '%s' "$FETCH_OUT" | cut -f2)
+            if sh /srv/app/docker/cert-reuse.sh "$CERT" "$SROCKS_ZONE" 0; then
+                echo "[entrypoint] stremio.rocks fetch failed -> keeping the trusted cert on disk until it expires"
+                HAVE_SROCKS=1
+                CERT_STATE=renewing
+            else
+                echo "[entrypoint] stremio.rocks fetch failed -> falling back to existing/self-signed cert"
+                CERT_STATE=waiting
+            fi
         fi
     fi
     # Both paths still do this: it depends on IPADDRESS, which can change between starts while the
@@ -49,6 +55,7 @@ if [ -n "${IPADDRESS}" ]; then
         [ -z "${SERVER_URL}" ] && SERVER_URL="https://${SROCKS_DOMAIN}:12470/"
     fi
 fi
+CERT_SOURCE=own
 if [ -f "$CERT" ]; then
     [ -n "${IPADDRESS}" ] || echo "[entrypoint] using existing cert $CERT (bring-your-own)"
 else
@@ -57,6 +64,21 @@ else
         -keyout "${CERT}.key" -out "${CERT}.crt" -subj "/CN=${DOMAIN:-localhost}" >/dev/null 2>&1
     cat "${CERT}.crt" "${CERT}.key" > "$CERT"
     rm -f "${CERT}.key" "${CERT}.crt"
+    CERT_SOURCE=self-signed
+fi
+# What /health (and through it the appliance) reports about the certificate, written at every start.
+CERT_STATUS="$CACHE/cert-status.json"
+if [ -n "${IPADDRESS}" ]; then
+    CERT_SOURCE=self-signed
+    [ -n "$HAVE_SROCKS" ] && CERT_SOURCE=stremio.rocks
+    CERT_NEXT=""
+    case "$CERT_STATE" in
+        waiting|renewing) CERT_NEXT=$(( $(date -u +%s) + ${CERT_RETRY_INTERVAL:-1800} )) ;;
+    esac
+    sh /srv/app/docker/cert-status.sh "$CERT_STATUS" "$CERT_SOURCE" "$CERT_STATE" \
+        "$CERT_REASON" "$CERT_DETAIL" "$SROCKS_DOMAIN" "$CERT_NEXT" || true
+else
+    sh /srv/app/docker/cert-status.sh "$CERT_STATUS" "$CERT_SOURCE" ok "" "" "" "" || true
 fi
 
 # 2) Point the bundled web player at the streaming server (stock localStorage mechanism).
@@ -120,8 +142,37 @@ sed "s#/root/.stremio-server/certificates.pem#${CERT}#g" \
 # --no-access-log: don't log every request — those lines include infohash/stream paths (a
 # content-neutrality + privacy concern, like nginx's access_log off) and would otherwise bury real
 # warnings/errors so the admin Logs card surfaces nothing.
+# --timeout-graceful-shutdown: a player holding a stream open must not hold up a stop.
 /srv/app/.venv/bin/uvicorn stremiosrv.app:build_app --factory --host 0.0.0.0 --port 11470 \
-  --no-access-log &
+  --no-access-log --timeout-graceful-shutdown 5 &
 APP_PID=$!
 nginx -c /tmp/nginx-allinone.conf -g 'daemon off;' &
-wait "$APP_PID"
+NGINX_PID=$!
+
+# If trusted certificate acquisition failed at startup, keep retrying in the background. On success
+# cert-retry.sh signals this entrypoint with USR1; the process then restarts in place and preserves
+# all fork startup patches above.
+RETRY_PID=""
+case "${CERT_STATE:-ok}" in
+    waiting|renewing)
+        sh /srv/app/docker/cert-retry.sh "$CERT" "$SROCKS_ZONE" "$CERT_STATUS" "$CERT_STATE" \
+            "$SROCKS_DOMAIN" $ &
+        RETRY_PID=$! ;;
+esac
+
+# PID 1 must forward stop signals explicitly so uvicorn can execute application shutdown hooks and
+# release the cache-root owner. USR1 performs the same graceful stop followed by an in-place restart.
+trap 'stopping=1; kill -TERM "$NGINX_PID" "$APP_PID" $RETRY_PID 2>/dev/null || true' TERM INT
+trap 'restarting=1; kill -TERM "$NGINX_PID" "$APP_PID" 2>/dev/null || true' USR1
+rc=0
+wait "$APP_PID" || rc=$?
+if [ -n "${stopping:-}${restarting:-}" ]; then
+    rc=0
+    wait "$APP_PID" || rc=$?
+fi
+if [ -n "${restarting:-}" ] && [ -z "${stopping:-}" ]; then
+    wait "$NGINX_PID" 2>/dev/null || true
+    echo "[cert] restarting in place to serve the trusted certificate"
+    exec "$0"
+fi
+exit "$rc"

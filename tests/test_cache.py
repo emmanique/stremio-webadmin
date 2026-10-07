@@ -29,11 +29,13 @@ def test_select_skips_in_use():
 
 def test_scan_skips_protected(tmp_path):
     (tmp_path / "certificates.pem").write_bytes(b"x")
+    (tmp_path / "cert-status.json").write_text('{"state":"ok"}')
     (tmp_path / "movie.mkv").write_bytes(b"y" * 100)
     (tmp_path / "transcode").mkdir()
     names = {i["name"] for i in scan_cache(str(tmp_path))}
     assert "movie.mkv" in names
     assert "certificates.pem" not in names
+    assert "cert-status.json" not in names
     assert "transcode" not in names
 
 
