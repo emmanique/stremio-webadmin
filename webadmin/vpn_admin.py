@@ -259,6 +259,22 @@ def _runtime_settings(data: dict | None) -> dict[str, object]:
     }
 
 
+def _wireguard_health(container):
+    """Read live handshake data without exposing WireGuard keys."""
+    if container is None or container.status != "running":
+        return {"state": "unavailable", "age": None, "rx": None}
+    try:
+        result = container.exec_run(["wg", "show", "all", "latest-handshakes"])
+        if result.exit_code != 0:
+            return {"state": "unknown", "age": None, "rx": None}
+        lines = result.output.decode("utf-8", errors="replace").splitlines()
+        stamps = [int(line.split()[-1]) for line in lines if line.split() and line.split()[-1].isdigit()]
+        age = min([int(time.time()) - stamp for stamp in stamps if stamp > 0], default=None)
+        return {"state": "connected" if age is not None and 0 <= age <= 120 else "degraded", "age": age, "rx": None}
+    except Exception:
+        return {"state": "unknown", "age": None, "rx": None}
+
+
 def vpn_status():
     gluetun = _container(GLUETUN_CONTAINER)
     stremio = _container(STREMIO_CONTAINER)
@@ -274,9 +290,29 @@ def vpn_status():
     state = (gluetun.attrs.get("State", {}) if gluetun else {}) or {}
     health = state.get("Health", {}) if isinstance(state.get("Health"), dict) else {}
     vpn_state = str((control_status or {}).get("status") or ("starting" if requested else "stopped"))
-    vpn_running = requested and vpn_state == "running"
+    tunnel = _wireguard_health(gluetun) if requested else {"state": "disconnected", "age": None, "rx": None}
+    # OpenVPN has no WireGuard handshake; trust only the control-plane running
+    # state for it, and report this lower-confidence evidence explicitly.
+    active_protocol = ""
+    try:
+        active_id = (VPN_DIR / "active_profile").read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[a-z0-9_-]+", active_id):
+            active_protocol = str(json.loads((VPN_DIR / "profiles" / active_id / "profile.json").read_text(encoding="utf-8")).get("protocol", "")).lower()
+    except (OSError, ValueError, TypeError):
+        pass
+    if active_protocol == "openvpn":
+        tunnel = {"state": "connected" if vpn_state == "running" else "degraded", "age": None, "rx": None}
+    elif vpn_state != "running" and tunnel["state"] == "connected":
+        tunnel["state"] = "degraded"
+    vpn_running = requested and vpn_state == "running" and tunnel["state"] == "connected"
     return {
         "deploymentMode": "vpn" if requested else "direct",
+        "healthStates": {
+            "container": health.get("Status") or ("running" if gluetun and gluetun.status == "running" else "unavailable"),
+            "vpn": tunnel["state"],
+            "stremio": ("healthy" if stremio and ((stremio.attrs.get("State") or {}).get("Health") or {}).get("Status") == "healthy" else ("running" if stremio and stremio.status == "running" else "unavailable")),
+            "handshakeAgeSeconds": tunnel["age"],
+        },
         "vpnRequested": requested,
         "gluetun": {
             "present": gluetun is not None,

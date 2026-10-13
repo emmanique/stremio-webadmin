@@ -9,6 +9,7 @@ NEXT_FILE="$CONFIG_DIR/next_profile"
 ENABLED_FILE="${STREMIO_VPN_ENABLED_FILE:-$CONFIG_DIR/enabled}"
 READY_FILE="/tmp/stremio-vpn-supervisor.ready"
 FORWARDED_PORT_FILE="$CONFIG_DIR/forwarded_port"
+FIREWALL_PORT_FILE="$CONFIG_DIR/.proton_firewall_port"
 DNS_PORT="${STREMIO_DNS_PROXY_PORT:-1053}"
 LOCAL_DNS_PORT="${STREMIO_LOCAL_DNS_PORT:-53}"
 PIHOLE_DNS="${STREMIO_PIHOLE_DNS:-172.30.0.53}"
@@ -70,6 +71,8 @@ prepare_runtime_config() {
         sub(/^[ \t]+/, "", line)
         split(line, fields, /[ \t]+/)
         key=tolower(fields[1])
+        if (key == "connect-timeout") has_connect_timeout=1
+        if (key == "server-poll-timeout") has_poll_timeout=1
         if (key == "redirect-gateway" || key == "redirect-private") next
         if (key == "up" || key == "down" || key == "route-up" || key == "route-pre-down" || key == "ipchange" || key == "learn-address" || key == "client-connect" || key == "client-disconnect" || key == "script-security") next
         lower=tolower(line)
@@ -80,6 +83,10 @@ prepare_runtime_config() {
         print "pull-filter ignore \"redirect-gateway\""
         print "pull-filter ignore \"redirect-private\""
         print "redirect-gateway def1"
+        # Bound per-endpoint wait so a dead TCP remote does not stall
+        # Proton fallback (e.g. port 8443 -> 443). Preserve explicit values.
+        if (!has_connect_timeout) print "connect-timeout 10"
+        if (!has_poll_timeout) print "server-poll-timeout 10"
     }' "$source_file" > "$target_file"
     chmod 600 "$target_file"
 }
@@ -261,12 +268,30 @@ prepare_profile() {
 }
 
 stop_port_forwarding() {
-    rm -f "$FORWARDED_PORT_FILE"
+    # Stop the worker first: removing the file before the worker exits can
+    # otherwise race with its last successful NAT-PMP renewal.
     if [ -n "$PORT_FORWARD_PID" ]; then
         kill "$PORT_FORWARD_PID" >/dev/null 2>&1 || true
         wait "$PORT_FORWARD_PID" 2>/dev/null || true
         PORT_FORWARD_PID=""
     fi
+    # The child's EXIT trap is not guaranteed to complete when killed while
+    # waiting for sleep. Clean the exact last advertised port from the parent.
+    # Keep an independent record: forwarded_port can be removed before cleanup.
+    for record in "$FIREWALL_PORT_FILE" "$FORWARDED_PORT_FILE"; do
+        [ -s "$record" ] || continue
+        old_port=$(sed -n '1p' "$record" | tr -d '\r\n')
+        case "$old_port" in
+            ''|*[!0-9]*) ;;
+            *)
+                if [ "$old_port" -ge 1 ] && [ "$old_port" -le 65535 ]; then
+                    iptables -w 2 -D INPUT -i tun0 -p tcp --dport "$old_port" -j ACCEPT >/dev/null 2>&1 || true
+                    iptables -w 2 -D INPUT -i tun0 -p udp --dport "$old_port" -j ACCEPT >/dev/null 2>&1 || true
+                fi
+                ;;
+        esac
+    done
+    rm -f "$FIREWALL_PORT_FILE" "$FORWARDED_PORT_FILE"
 }
 
 start_proton_port_forwarding() {
@@ -274,14 +299,69 @@ start_proton_port_forwarding() {
     [ "${PROFILE_PROVIDER:-}" = "proton" ] && [ "${PROFILE_PORT_FORWARDING:-false}" = "true" ] || return 0
     command -v natpmpc >/dev/null 2>&1 || { echo "[vpn] Proton port forwarding requested but natpmpc is unavailable" >&2; return 1; }
     (
+        opened_port=""
+        close_vpn_port() {
+            [ -n "$opened_port" ] || return 0
+            iptables -w 2 -D INPUT -i tun0 -p tcp --dport "$opened_port" -j ACCEPT >/dev/null 2>&1 || true
+            iptables -w 2 -D INPUT -i tun0 -p udp --dport "$opened_port" -j ACCEPT >/dev/null 2>&1 || true
+            opened_port=""
+        }
+        trap 'close_vpn_port' EXIT HUP INT TERM
         while vpn_enabled; do
             out=$(natpmpc -a 1 0 tcp 60 -g 10.2.0.1 2>&1 || true)
             port=$(printf '%s\n' "$out" | sed -n 's/.*Mapped public port \([0-9][0-9]*\).*/\1/p' | head -1)
+            # Publish a lease only when both transport mappings are confirmed.
+            # A stale or TCP-only port must never be advertised to libtorrent.
+            case "$port" in
+                ''|*[!0-9]*) port="" ;;
+                *) if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then port=""; fi ;;
+            esac
+            if [ -n "$port" ]; then
+                udp_out=$(natpmpc -a "$port" "$port" udp 60 -g 10.2.0.1 2>&1 || true)
+                udp_port=$(printf '%s\n' "$udp_out" | sed -n 's/.*Mapped public port \([0-9][0-9]*\).*/\1/p' | head -1)
+                if [ "$udp_port" != "$port" ]; then
+                    echo "[vpn] Proton NAT-PMP UDP mapping did not confirm TCP port $port" >&2
+                    port=""
+                fi
+            fi
+            if [ -n "$port" ]; then
+                # Permit inbound traffic on tun0 only for the confirmed Proton lease.
+                # Never change the DROP policies or accept inbound traffic on eth0.
+                if [ "$opened_port" != "$port" ]; then
+                    close_vpn_port
+                fi
+                # Gluetun rebuilds its firewall on reconnect; verify both rules
+                # on every lease renewal, even when the port number is unchanged.
+                if ! iptables -w 2 -C INPUT -i tun0 -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 ||
+                   ! iptables -w 2 -C INPUT -i tun0 -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+                    iptables -w 2 -C INPUT -i tun0 -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 ||
+                        iptables -w 2 -I INPUT 1 -i tun0 -p tcp --dport "$port" -j ACCEPT || port=""
+                    if [ -n "$port" ]; then
+                        iptables -w 2 -C INPUT -i tun0 -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 ||
+                            iptables -w 2 -I INPUT 1 -i tun0 -p udp --dport "$port" -j ACCEPT || port=""
+                    fi
+                fi
+                if [ -n "$port" ] &&
+                   iptables -w 2 -C INPUT -i tun0 -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 &&
+                   iptables -w 2 -C INPUT -i tun0 -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1; then
+                    opened_port="$port"
+                    printf '%s\n' "$port" > "$FIREWALL_PORT_FILE.tmp"
+                    mv -f "$FIREWALL_PORT_FILE.tmp" "$FIREWALL_PORT_FILE"
+                else
+                    # Roll back a partially opened TCP/UDP pair as well.
+                    [ -z "$port" ] || {
+                        iptables -w 2 -D INPUT -i tun0 -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+                        iptables -w 2 -D INPUT -i tun0 -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+                    }
+                    close_vpn_port
+                    port=""
+                fi
+            fi
             if [ -n "$port" ]; then
                 tmp="$FORWARDED_PORT_FILE.tmp"; printf '%s\n' "$port" > "$tmp"; chmod 600 "$tmp"; mv -f "$tmp" "$FORWARDED_PORT_FILE"
-                natpmpc -a "$port" "$port" udp 60 -g 10.2.0.1 >/dev/null 2>&1 || true
-                echo "[vpn] Proton NAT-PMP lease active on port $port (TCP/UDP)"
+                echo "[vpn] Proton NAT-PMP lease and tun0 firewall confirmed on port $port (TCP/UDP)"
             else
+                close_vpn_port
                 rm -f "$FORWARDED_PORT_FILE"
                 echo "[vpn] Proton NAT-PMP lease unavailable; remaining VPN-only without inbound forwarding" >&2
             fi
@@ -289,6 +369,26 @@ start_proton_port_forwarding() {
         done
     ) &
     PORT_FORWARD_PID=$!
+}
+
+# Remove only exact duplicate rules. Never flush chains or relax DROP policies.
+# Rules generated by Gluetun are re-added on its internal reconnect loop.
+deduplicate_firewall_rules() {
+    command -v iptables >/dev/null 2>&1 || return 0
+    for chain in INPUT OUTPUT; do
+        [ "$(iptables -S "$chain" 2>/dev/null | sed -n '1p')" = "-P $chain DROP" ] || continue
+        iptables -S "$chain" 2>/dev/null | grep "^-A $chain " | sort | uniq -d | while IFS= read -r rule; do
+            # Gluetun rules contain space-delimited flags and no quoted arguments.
+            # Restrict deletion to an existing exact rule and retain one copy.
+            case "$rule" in *"'"*|*'"'*|*'\\'* ) continue ;; esac
+            while [ "$(iptables -S "$chain" 2>/dev/null | grep -Fxc -- "$rule")" -gt 1 ]; do
+                # split flags deliberately; each value is supplied by iptables -S.
+                set -- $rule
+                shift
+                iptables -w 2 -D "$@" >/dev/null 2>&1 || break
+            done
+        done
+    done
 }
 
 start_vpn_child() {
@@ -328,8 +428,12 @@ start_vpn_child() {
         sleep 1
     done
 
-    echo "[vpn] Gluetun DNS resolver did not become ready within 30 seconds" >&2
-    return 0
+    echo "[vpn] Gluetun DNS resolver did not become ready within 30 seconds; stopping VPN child and retaining fail-closed state" >&2
+    kill -TERM "$VPN_PID" >/dev/null 2>&1 || true
+    wait "$VPN_PID" 2>/dev/null || true
+    VPN_PID=""
+    stop_dns_proxy
+    return 1
 }
 
 stop_vpn_child_for_direct() {
@@ -418,6 +522,13 @@ while :; do
         if [ -z "$LOCAL_DNS_TCP_PID" ] || ! kill -0 "$LOCAL_DNS_TCP_PID" >/dev/null 2>&1; then
             start_local_dns_proxy
         fi
+    fi
+    # Periodic exact-duplicate cleanup, without changing VPN egress policy.
+    FIREWALL_SWEEP_COUNT=${FIREWALL_SWEEP_COUNT:-0}
+    FIREWALL_SWEEP_COUNT=$((FIREWALL_SWEEP_COUNT + 1))
+    if [ "$FIREWALL_SWEEP_COUNT" -ge 30 ]; then
+        FIREWALL_SWEEP_COUNT=0
+        if vpn_enabled; then deduplicate_firewall_rules; fi
     fi
     sleep 1
 done

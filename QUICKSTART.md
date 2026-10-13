@@ -17,9 +17,9 @@ Current platform release:
 
 ```text
 Upstream Core   1.6.34
-Fork/Platform   3.0.13
-WebAdmin        3.0.13
-VPN Gateway     3.0.13
+Fork/Platform   3.0.14
+WebAdmin        3.0.14
+VPN Gateway     3.0.14
 ```
 
 ## 1. Obtain the deployment files
@@ -60,9 +60,9 @@ pihole/pihole:latest
 You can pin the coordinated release in `.env`:
 
 ```env
-STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.13
-WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.13
-VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.13
+STREMIO_IMAGE=ghcr.io/emmanique/stremio-server:3.0.14
+WEBADMIN_IMAGE=ghcr.io/emmanique/stremio-webadmin:3.0.14
+VPN_IMAGE=ghcr.io/emmanique/stremio-vpn:3.0.14
 ```
 
 ## 3. Host IP detection

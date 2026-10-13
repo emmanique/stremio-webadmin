@@ -38,6 +38,9 @@
   section.innerHTML = `
     <article class="panel"><div class="title row"><span>VPN</span><button class="copy" id="vpnRefresh">↻ Refresh</button></div><div class="inner">
       <div class="vpnGrid">
+        <div class="vpnCard"><span>Container health</span><b id="vpnContainerHealth">—</b></div>
+        <div class="vpnCard"><span>VPN connectivity</span><b id="vpnConnectivityHealth">—</b></div>
+        <div class="vpnCard"><span>Stremio service</span><b id="vpnStremioHealth">—</b></div>
         <div class="vpnCard"><span>Deployment</span><b id="vpnMode">—</b></div>
         <div class="vpnCard"><span>Tunnel</span><b id="vpnTunnel">—</b></div>
         <div class="vpnCard"><span>Active connection</span><b id="vpnActive">—</b></div>
@@ -125,8 +128,12 @@
   function renderStatus(data) {
     const g = data.gluetun || {}, routing = data.routing || {}, active = data.activeProfile || {};
     $('vpnMode').innerHTML = data.deploymentMode === 'vpn' ? badge(true, 'VPN') : badge(false, 'Direct');
-    const running = g.vpnStatus === 'running';
-    $('vpnTunnel').innerHTML = badge(running, g.vpnStatus || (g.present ? 'starting' : 'not deployed'));
+    const states = data.healthStates || {};
+    $('vpnContainerHealth').innerHTML = badge(states.container === 'healthy', states.container || 'unknown');
+    $('vpnConnectivityHealth').innerHTML = badge(states.vpn === 'connected', states.vpn || 'unknown');
+    $('vpnStremioHealth').innerHTML = badge(states.stremio === 'healthy' || states.stremio === 'running', states.stremio || 'unknown');
+    const running = states.vpn === 'connected';
+    $('vpnTunnel').innerHTML = badge(running, states.vpn || g.vpnStatus || (g.present ? 'starting' : 'not deployed'));
     $('vpnActive').textContent = active.name || 'None';
     $('vpnPublicIp').textContent = g.publicIp || '—';
     $('vpnKill').innerHTML = badge(!!routing.killSwitchActive, routing.killSwitchActive ? 'Active' : 'Not verified');
@@ -135,6 +142,8 @@
     $('vpnTx').textContent = fmtBytes(g.txBytes);
     if (data.deploymentMode !== 'vpn') {
       $('vpnModeHint').innerHTML = '<b>Direct mode is active.</b> The gateway remains online; create/import a connection and enable VPN when ready.';
+    } else if (states.vpn !== 'connected') {
+      $('vpnModeHint').innerHTML = '<b>VPN degraded or connecting.</b> Stremio traffic remains fail-closed. Container readiness is not proof of a working tunnel.';
     } else if (!g.controlAvailable) {
       $('vpnModeHint').innerHTML = `<b>VPN stack detected, control API not ready.</b> ${esc(g.controlError || 'The VPN gateway may still be starting or waiting for a valid profile.')}`;
     } else {
