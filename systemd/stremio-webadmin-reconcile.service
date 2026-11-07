@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconcile authenticated Gateway VPN BT port into Stremio Compose
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/etc/stremio-webadmin/port-sync.conf
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/stremio-server-webadmin
+ExecStart=/usr/bin/python3 /opt/stremio-server-webadmin/scripts/reconcile-host.py
+TimeoutStartSec=210

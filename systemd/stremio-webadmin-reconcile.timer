@@ -1,0 +1,11 @@
+[Unit]
+Description=Stremio Gateway BT port reconciliation timer
+
+[Timer]
+OnBootSec=40s
+OnUnitInactiveSec=45s
+Persistent=true
+Unit=stremio-webadmin-reconcile.service
+
+[Install]
+WantedBy=timers.target

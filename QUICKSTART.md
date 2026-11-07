@@ -1,3 +1,7 @@
+## Gateway VPN Multi port observation (3.0.15)
+
+The optional standalone Stremio integration accepts a verified Gateway port observation from the Linux-host bootstrap, updates `STREMIOSRV_BT_LISTEN_PORT` only when it changes, and recreates the server with GPU and health checks. This integration is disabled by default and is not supported with shared Gluetun network namespaces. See [v3.0.15 release notes](docs/releases/v3.0.15.md).
+
 # Quick Start
 
 This fork runs four coordinated services from one Docker Compose topology:
