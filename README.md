@@ -4,11 +4,11 @@ The optional standalone Stremio integration accepts a verified Gateway port obse
 
 <div align="center">
 
-# Stremio Server WebAdmin 3.0.14
+# Stremio Server WebAdmin 3.0.15
 
 ### Self-hosted Stremio streaming with WebAdmin, GPU transcoding, VPN, Pi-hole and Library management
 
-[![Platform](https://img.shields.io/badge/platform-3.0.14-7c3aed)](docs/releases/v3.0.14.md)
+[![Platform](https://img.shields.io/badge/platform-3.0.15-7c3aed)](docs/releases/v3.0.15.md)
 [![Core](https://img.shields.io/badge/Stremio_Core-1.6.34-5b21b6)](SERVER_VERSION)
 ![Upstream](https://img.shields.io/badge/upstream-aligned-2563eb)
 ![Fork](https://img.shields.io/badge/fork-enhanced-7c3aed)
@@ -18,14 +18,14 @@ The optional standalone Stremio integration accepts a verified Gateway port obse
 
 **Run your own Stremio streaming backend with a browser-based administration interface, automatic hardware acceleration, optional VPN routing and integrated DNS filtering.**
 
-[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.14.md)
+[Quick Start](QUICKSTART.md) · [VPN Guide](VPN.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE.md) · [Release Notes](docs/releases/v3.0.15.md)
 
 </div>
 
 ---
 
 <p align="center">
-  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.14 dashboard">
+  <img src="docs/screenshots/webadmin-dashboard.jpg" width="900" alt="Stremio WebAdmin 3.0.15 dashboard">
 </p>
 
 ## ✨ Highlights
@@ -244,10 +244,10 @@ Preserve the existing `.env` and persistent volumes. **Do not use `docker compos
 
 | Component | Development baseline |
 |---|---:|
-| Fork / Platform | **3.0.14** |
-| WebAdmin | **3.0.14** |
+| Fork / Platform | **3.0.15** |
+| WebAdmin | **3.0.15** |
 | Upstream Server/Core | **1.6.34** |
-| VPN Gateway image | **3.0.14** |
+| VPN Gateway image | **3.0.15** |
 
 Versioning is intentionally independent: the platform/WebAdmin version identifies this fork, while the embedded Server/Core keeps its upstream-derived version.
 
